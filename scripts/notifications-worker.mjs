@@ -1,9 +1,12 @@
 import crypto from "crypto";
-import { PrismaClient } from "@prisma/client";
 import makeWASocket, { BufferJSON, DisconnectReason, initAuthCreds, proto } from "baileys";
 import pino from "pino";
 import QRCode from "qrcode";
+import { normalizeWorkerEnv } from "./env.mjs";
 
+normalizeWorkerEnv();
+
+const { PrismaClient } = await import("@prisma/client");
 const prisma = new PrismaClient();
 const logger = pino({ level: process.env.NOTIFICATIONS_WORKER_LOG_LEVEL || "info" });
 const sockets = new Map();

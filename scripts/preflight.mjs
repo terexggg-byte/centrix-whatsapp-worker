@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { normalizeWorkerEnv } from "./env.mjs";
 
 const requiredEnv = ["DATABASE_URL", "WHATSAPP_AUTH_ENCRYPTION_KEY"];
 for (const key of requiredEnv) {
@@ -7,6 +7,9 @@ for (const key of requiredEnv) {
   }
 }
 
+normalizeWorkerEnv();
+
+const { PrismaClient } = await import("@prisma/client");
 const prisma = new PrismaClient();
 
 try {
