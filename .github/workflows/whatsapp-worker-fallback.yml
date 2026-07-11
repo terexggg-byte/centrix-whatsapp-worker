@@ -50,5 +50,8 @@ jobs:
       - name: Generate Prisma client
         run: npm run prisma:generate
 
+      - name: Preflight database lease
+        run: npm run notifications:preflight
+
       - name: Run worker
         run: timeout 345m npm run notifications:worker

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "notifications:worker": "node scripts/notifications-worker.mjs",
+    "notifications:preflight": "node scripts/preflight.mjs",
     "prisma:generate": "prisma generate",
     "check": "node --check scripts/notifications-worker.mjs && DATABASE_URL=postgresql://user:pass@localhost:5432/db prisma validate"
   },
