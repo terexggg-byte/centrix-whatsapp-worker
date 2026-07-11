@@ -54,4 +54,15 @@ jobs:
         run: npm run notifications:preflight
 
       - name: Run worker
-        run: timeout 345m npm run notifications:worker
+        run: |
+          set +e
+          timeout 345m npm run notifications:worker
+          status=$?
+          set -e
+
+          if [ "$status" -eq 124 ]; then
+            echo "Worker run window completed; the next scheduled run will continue fallback."
+            exit 0
+          fi
+
+          exit "$status"
