@@ -1,0 +1,54 @@
+name: WhatsApp Worker Fallback
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */4 * * *"
+
+concurrency:
+  group: whatsapp-worker-fallback
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    name: Run WhatsApp worker fallback
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      WHATSAPP_AUTH_ENCRYPTION_KEY: ${{ secrets.WHATSAPP_AUTH_ENCRYPTION_KEY }}
+      DATA_SOURCE: prisma
+      NODE_ENV: production
+      NOTIFICATIONS_WORKER_LOG_LEVEL: info
+      NOTIFICATIONS_WORKER_HA_ENABLED: "true"
+      NOTIFICATIONS_WORKER_INSTANCE_LABEL: github-actions
+      NOTIFICATIONS_WORKER_PREFERRED_LABEL: github-actions
+      NOTIFICATIONS_WORKER_LEASE_TTL_MS: "45000"
+      NOTIFICATIONS_WORKER_LEASE_RENEW_MS: "10000"
+
+    steps:
+      - name: Check required secrets
+        run: |
+          test -n "$DATABASE_URL"
+          test -n "$WHATSAPP_AUTH_ENCRYPTION_KEY"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Run worker
+        run: timeout 345m npm run notifications:worker

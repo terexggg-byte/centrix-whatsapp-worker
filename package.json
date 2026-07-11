@@ -1,0 +1,18 @@
+{
+  "name": "centrix-whatsapp-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "notifications:worker": "node scripts/notifications-worker.mjs",
+    "prisma:generate": "prisma generate",
+    "check": "node --check scripts/notifications-worker.mjs && DATABASE_URL=postgresql://user:pass@localhost:5432/db prisma validate"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "baileys": "^7.0.0-rc13",
+    "pino": "^10.3.1",
+    "prisma": "^5.22.0",
+    "qrcode": "^1.5.4"
+  }
+}
