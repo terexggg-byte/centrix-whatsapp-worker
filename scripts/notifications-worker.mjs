@@ -1,8 +1,16 @@
 import crypto from "crypto";
-import makeWASocket, { BufferJSON, DisconnectReason, initAuthCreds, proto } from "baileys";
+import makeWASocket, {
+  BufferJSON,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
+  initAuthCreds,
+  proto
+} from "baileys";
 import pino from "pino";
 import QRCode from "qrcode";
 import { normalizeWorkerEnv } from "./env.mjs";
+import { resolveWhatsAppVersion, sameWhatsAppVersion } from "./whatsapp-version.mjs";
 
 normalizeWorkerEnv();
 
@@ -20,6 +28,9 @@ let shuttingDown = false;
 let leaderActive = false;
 let leaseTimer = null;
 let leaseCycleRunning = false;
+let whatsAppVersionState = null;
+let whatsAppVersionRefreshPromise = null;
+let whatsAppVersionForcedAt = 0;
 
 const POLL_INTERVAL_MS = Number(process.env.NOTIFICATIONS_WORKER_POLL_MS || 5000);
 const SESSION_POLL_INTERVAL_MS = Number(process.env.NOTIFICATIONS_WORKER_SESSION_POLL_MS || 4000);
@@ -27,6 +38,9 @@ const SUBSCRIPTION_SCAN_INTERVAL_MS = Number(process.env.NOTIFICATIONS_SUBSCRIPT
 const SUBSCRIPTION_EXPIRING_DAYS = Number(process.env.NOTIFICATIONS_SUBSCRIPTION_EXPIRING_DAYS || 7);
 const WHATSAPP_RECONNECT_BASE_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_RECONNECT_BASE_MS || 1500);
 const WHATSAPP_RECONNECT_MAX_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_RECONNECT_MAX_MS || 30000);
+const WHATSAPP_VERSION_REFRESH_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_VERSION_REFRESH_MS || 6 * 60 * 60 * 1000);
+const WHATSAPP_VERSION_FORCE_COOLDOWN_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_VERSION_FORCE_COOLDOWN_MS || 5 * 60 * 1000);
+const WHATSAPP_VERSION_FETCH_TIMEOUT_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_VERSION_FETCH_TIMEOUT_MS || 5000);
 const WORKER_LEASE_ID = process.env.NOTIFICATIONS_WORKER_LEASE_ID || "notifications-worker";
 const WORKER_OWNER_ID = process.env.NOTIFICATIONS_WORKER_INSTANCE_ID || crypto.randomUUID();
 const WORKER_OWNER_LABEL = inferWorkerLabel();
@@ -46,6 +60,74 @@ const DEFAULT_EVENT_TEMPLATES = {
   SUBSCRIPTION_EXPIRING:
     "اشتراك الطالب {{studentName}} يقترب من الانتهاء بتاريخ {{date}}. المبلغ المستحق: {{amount}}."
 };
+
+async function withTimeout(operation, timeoutMs, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error(`${label} timed out.`);
+          error.code = "WHATSAPP_VERSION_FETCH_TIMEOUT";
+          reject(error);
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function getWhatsAppProtocolVersion({ force = false } = {}) {
+  const now = Date.now();
+  const cachedIsFresh = whatsAppVersionState
+    && now - whatsAppVersionState.resolvedAt < WHATSAPP_VERSION_REFRESH_MS;
+  const forceIsCoolingDown = force
+    && whatsAppVersionState
+    && now - whatsAppVersionForcedAt < WHATSAPP_VERSION_FORCE_COOLDOWN_MS;
+
+  if ((!force && cachedIsFresh) || forceIsCoolingDown) return whatsAppVersionState;
+  if (whatsAppVersionRefreshPromise) return whatsAppVersionRefreshPromise;
+  if (force) whatsAppVersionForcedAt = now;
+
+  whatsAppVersionRefreshPromise = (async () => {
+    const resolved = await resolveWhatsAppVersion({
+      fetchBaileysVersion: () => withTimeout(
+        () => fetchLatestBaileysVersion(),
+        WHATSAPP_VERSION_FETCH_TIMEOUT_MS,
+        "Baileys protocol version lookup"
+      ),
+      fetchWaWebVersion: () => withTimeout(
+        () => fetchLatestWaWebVersion({ signal: AbortSignal.timeout(WHATSAPP_VERSION_FETCH_TIMEOUT_MS) }),
+        WHATSAPP_VERSION_FETCH_TIMEOUT_MS,
+        "WhatsApp Web protocol version lookup"
+      ),
+      fallbackVersion: whatsAppVersionState?.version
+    });
+    whatsAppVersionState = {
+      version: resolved.version,
+      source: resolved.source,
+      verified: resolved.verified,
+      resolvedAt: Date.now()
+    };
+    logger[resolved.verified ? "info" : "warn"]({
+      source: resolved.source,
+      verified: resolved.verified,
+      revision: resolved.version[2],
+      resolutionErrors: resolved.errors.length
+    }, resolved.verified
+      ? "resolved current WhatsApp Web protocol version"
+      : "using cached or package WhatsApp Web protocol version");
+    return whatsAppVersionState;
+  })();
+
+  try {
+    return await whatsAppVersionRefreshPromise;
+  } finally {
+    whatsAppVersionRefreshPromise = null;
+  }
+}
 
 function parseBoolean(value, defaultValue = false) {
   if (value === undefined || value === null || value === "") {
@@ -626,11 +708,13 @@ async function connectTenant(tenantId) {
     }
 
     const { state, saveCreds } = await usePrismaAuthState(tenantId);
+    const protocolVersion = await getWhatsAppProtocolVersion();
     const socket = makeWASocket({
       auth: state,
       logger,
       markOnlineOnConnect: false,
-      printQRInTerminal: false
+      printQRInTerminal: false,
+      version: protocolVersion.version
     });
 
     sockets.set(tenantId, socket);
@@ -706,7 +790,11 @@ async function connectTenant(tenantId) {
           const statusCode = update.lastDisconnect?.error?.output?.statusCode;
           const loggedOut = statusCode === DisconnectReason.loggedOut;
           const restartRequired = statusCode === DisconnectReason.restartRequired;
-          const errorMessage = update.lastDisconnect?.error?.message || null;
+          const unregisteredSession = !state.creds?.registered && !state.creds?.me?.id;
+          const protocolRejected = statusCode === 405 && unregisteredSession;
+          const errorMessage = protocolRejected
+            ? "تعذر بدء ربط واتساب بسبب رفض إصدار بروتوكول الاتصال. يقوم النظام بتحديث الإصدار وإعادة المحاولة تلقائيًا."
+            : update.lastDisconnect?.error?.message || null;
           await waitForCredentialSave(tenantId);
 
           if (loggedOut) {
@@ -722,6 +810,32 @@ async function connectTenant(tenantId) {
             });
             await pauseActiveDeliveries(tenantId);
             logger.warn({ tenantId, statusCode, hasMe: Boolean(state.creds?.me?.id) }, "WhatsApp terminal logout; auth state cleared");
+            return;
+          }
+
+          if (protocolRejected) {
+            const refreshedVersion = await getWhatsAppProtocolVersion({ force: true });
+            const versionChanged = !sameWhatsAppVersion(protocolVersion.version, refreshedVersion.version);
+            await setSessionStatus(tenantId, {
+              status: "CONNECTING",
+              qrCode: null,
+              qrCodeDataUrl: null,
+              disconnectedAt: new Date(),
+              errorMessage
+            });
+            await pauseActiveDeliveries(tenantId);
+            logger.warn({
+              tenantId,
+              statusCode,
+              versionChanged,
+              versionSource: refreshedVersion.source,
+              versionVerified: refreshedVersion.verified
+            }, "WhatsApp rejected new-device registration; refreshed protocol version");
+            scheduleReconnect(
+              tenantId,
+              versionChanged ? "protocol-version-refreshed" : "protocol-version-rejected",
+              versionChanged
+            );
             return;
           }
 
