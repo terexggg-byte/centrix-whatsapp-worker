@@ -15,6 +15,7 @@ import {
   validateWorkerConfiguration
 } from "../scripts/notifications-worker-runtime.mjs";
 import { buildNotificationWorkerHealth } from "../lib/server/notification-worker-health.mjs";
+import { normalizeWorkerEnv } from "../scripts/notifications-worker-env.mjs";
 
 const validProductionEnv = {
   NODE_ENV: "production",
@@ -30,6 +31,25 @@ const validProductionEnv = {
   NOTIFICATIONS_WORKER_LEASE_RENEW_MS: "10000",
   NOTIFICATIONS_WORKER_PREEMPT_GRACE_MS: "12500"
 };
+
+test("worker environment normalization accepts legacy GitHub .env secret formatting", () => {
+  const names = ["DATABASE_URL", "WHATSAPP_AUTH_ENCRYPTION_KEY", "CARD_EXPORT_WORKER_SECRET"];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    process.env.DATABASE_URL = 'DATABASE_URL="postgresql://user:pass@db.example.test:5432/centrix"';
+    process.env.WHATSAPP_AUTH_ENCRYPTION_KEY = "'existing-encryption-key'";
+    process.env.CARD_EXPORT_WORKER_SECRET = "CARD_EXPORT_WORKER_SECRET=existing-card-export-secret";
+    normalizeWorkerEnv();
+    assert.equal(process.env.DATABASE_URL, "postgresql://user:pass@db.example.test:5432/centrix");
+    assert.equal(process.env.WHATSAPP_AUTH_ENCRYPTION_KEY, "existing-encryption-key");
+    assert.equal(process.env.CARD_EXPORT_WORKER_SECRET, "existing-card-export-secret");
+  } finally {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  }
+});
 
 test("production configuration is fail-closed", () => {
   assert.throws(

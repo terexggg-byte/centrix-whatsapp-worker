@@ -11,6 +11,7 @@ import makeWASocket, {
 } from "baileys";
 import pino from "pino";
 import QRCode from "qrcode";
+import { normalizeWorkerEnv } from "./notifications-worker-env.mjs";
 import {
   WORKER_STATUS_MESSAGE_TYPE,
   createLeaseHeartbeatScheduler,
@@ -28,6 +29,7 @@ import {
 } from "./notifications-worker-runtime.mjs";
 
 nextEnv.loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
+normalizeWorkerEnv();
 
 const prisma = new PrismaClient();
 const inferredWorkerLabel = inferWorkerLabel();
