@@ -28,12 +28,16 @@ jobs:
       NOTIFICATIONS_WORKER_PREFERRED_LABEL: github-actions
       NOTIFICATIONS_WORKER_LEASE_TTL_MS: "45000"
       NOTIFICATIONS_WORKER_LEASE_RENEW_MS: "10000"
+      CARD_EXPORT_WORKER_ENABLED: "true"
+      CARD_EXPORT_APP_BASE_URL: "https://center-management-system-prod.vercel.app"
+      CARD_EXPORT_WORKER_SECRET: ${{ secrets.CARD_EXPORT_WORKER_SECRET }}
 
     steps:
       - name: Check required secrets
         run: |
           test -n "$DATABASE_URL"
           test -n "$WHATSAPP_AUTH_ENCRYPTION_KEY"
+          test -n "$CARD_EXPORT_WORKER_SECRET"
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,6 +53,8 @@ jobs:
 
       - name: Test WhatsApp protocol hotfix
         run: node --test tests/whatsapp-version.test.mjs
+      - name: Test worker lease and Card Export runtime
+        run: node --test tests/notifications-worker-runtime.test.mjs
 
       - name: Generate Prisma client
         run: npm run prisma:generate

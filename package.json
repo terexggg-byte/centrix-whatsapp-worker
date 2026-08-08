@@ -10,6 +10,7 @@
     "check": "node --check scripts/notifications-worker.mjs && DATABASE_URL=postgresql://user:pass@localhost:5432/db prisma validate"
   },
   "dependencies": {
+    "@next/env": "14.2.35",
     "@prisma/client": "^5.22.0",
     "baileys": "^7.0.0-rc13",
     "pino": "^10.3.1",

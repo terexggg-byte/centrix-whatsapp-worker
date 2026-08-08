@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import nextEnv from "@next/env";
+import { PrismaClient } from "@prisma/client";
 import makeWASocket, {
   BufferJSON,
   DisconnectReason,
@@ -9,14 +11,56 @@ import makeWASocket, {
 } from "baileys";
 import pino from "pino";
 import QRCode from "qrcode";
-import { normalizeWorkerEnv } from "./env.mjs";
-import { resolveWhatsAppVersion, sameWhatsAppVersion } from "./whatsapp-version.mjs";
+import {
+  WORKER_STATUS_MESSAGE_TYPE,
+  createLeaseHeartbeatScheduler,
+  deliveryOwnershipWhere,
+  executeIdempotentSend,
+  parseBoolean,
+  positiveNumber,
+  redactLogValue,
+  resolveWhatsAppVersion,
+  sameWhatsAppVersion,
+  sanitizeErrorMessage,
+  serializeSafeError,
+  shouldReleaseDeliveryOnLeadershipChange,
+  validateWorkerConfiguration
+} from "./notifications-worker-runtime.mjs";
 
-normalizeWorkerEnv();
+nextEnv.loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
 
-const { PrismaClient } = await import("@prisma/client");
 const prisma = new PrismaClient();
-const logger = pino({ level: process.env.NOTIFICATIONS_WORKER_LOG_LEVEL || "info" });
+const inferredWorkerLabel = inferWorkerLabel();
+const workerConfig = validateWorkerConfiguration(process.env, inferredWorkerLabel);
+const logger = pino({
+  level: process.env.NOTIFICATIONS_WORKER_LOG_LEVEL || "info",
+  serializers: {
+    err: serializeSafeError,
+    error: serializeSafeError
+  },
+  hooks: {
+    logMethod(args, method) {
+      const sanitizedArgs = args.map((arg) => (
+        arg && typeof arg === "object" ? redactLogValue(arg) : arg
+      ));
+      return method.apply(this, sanitizedArgs);
+    }
+  },
+  redact: {
+    paths: [
+      "auth", "creds", "credentials", "databaseUrl", "DATABASE_URL", "devicePairingData",
+      "helloMsg", "host", "hostname", "jid", "key", "node", "password", "phone",
+      "phoneNumber", "qr", "recipientAddress", "recipientPhone", "remoteJid", "secret", "token",
+      "*.auth", "*.creds", "*.credentials", "*.databaseUrl", "*.DATABASE_URL", "*.devicePairingData",
+      "*.helloMsg", "*.host", "*.hostname", "*.jid", "*.key", "*.node", "*.password", "*.phone",
+      "*.phoneNumber", "*.qr", "*.recipientAddress", "*.recipientPhone", "*.remoteJid", "*.secret", "*.token"
+    ],
+    censor: "[REDACTED]"
+  }
+});
+const baileysLogger = logger.child({ component: "baileys" }, {
+  level: process.env.NOTIFICATIONS_WORKER_BAILEYS_LOG_LEVEL || "warn"
+});
 const sockets = new Map();
 const connecting = new Set();
 const pendingCredentialSaves = new Map();
@@ -24,42 +68,74 @@ const reconnectTimers = new Map();
 const reconnectAttempts = new Map();
 const intentionallyEndingSockets = new Set();
 const leaderTimers = new Set();
+const activeDeliveries = new Map();
+const activeCardExportJobs = new Map();
+let cardExportQueueInFlight = false;
+const healthcheckLastPingAt = new Map();
 let shuttingDown = false;
 let leaderActive = false;
 let leaseTimer = null;
 let leaseCycleRunning = false;
+let leaderAcquiredAt = null;
+let staleLockScanAt = 0;
 let whatsAppVersionState = null;
 let whatsAppVersionRefreshPromise = null;
 let whatsAppVersionForcedAt = 0;
 
 const POLL_INTERVAL_MS = Number(process.env.NOTIFICATIONS_WORKER_POLL_MS || 5000);
+const CARD_EXPORT_WORKER_ENABLED = parseBoolean(process.env.CARD_EXPORT_WORKER_ENABLED, false);
+const CARD_EXPORT_WORKER_ONLY = parseBoolean(process.env.NOTIFICATIONS_WORKER_CARD_EXPORT_ONLY, false);
+const CARD_EXPORT_WORKER_POLL_MS = positiveNumber(process.env.CARD_EXPORT_WORKER_POLL_MS, 5_000);
+const CARD_EXPORT_WORKER_STALE_LOCK_MS = positiveNumber(process.env.CARD_EXPORT_WORKER_STALE_LOCK_MS, 10 * 60 * 1000);
+const CARD_EXPORT_WORKER_REQUEST_TIMEOUT_MS = positiveNumber(
+  process.env.CARD_EXPORT_WORKER_REQUEST_TIMEOUT_MS,
+  4 * 60 * 1000
+);
+const CARD_EXPORT_APP_BASE_URL = String(process.env.CARD_EXPORT_APP_BASE_URL || "").trim().replace(/\/$/, "");
+const CARD_EXPORT_WORKER_SECRET = String(process.env.CARD_EXPORT_WORKER_SECRET || "").trim();
 const SESSION_POLL_INTERVAL_MS = Number(process.env.NOTIFICATIONS_WORKER_SESSION_POLL_MS || 4000);
 const SUBSCRIPTION_SCAN_INTERVAL_MS = Number(process.env.NOTIFICATIONS_SUBSCRIPTION_SCAN_MS || 60 * 60 * 1000);
 const SUBSCRIPTION_EXPIRING_DAYS = Number(process.env.NOTIFICATIONS_SUBSCRIPTION_EXPIRING_DAYS || 7);
 const WHATSAPP_RECONNECT_BASE_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_RECONNECT_BASE_MS || 1500);
 const WHATSAPP_RECONNECT_MAX_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_RECONNECT_MAX_MS || 30000);
-const WHATSAPP_VERSION_REFRESH_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_VERSION_REFRESH_MS || 6 * 60 * 60 * 1000);
-const WHATSAPP_VERSION_FORCE_COOLDOWN_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_VERSION_FORCE_COOLDOWN_MS || 5 * 60 * 1000);
-const WHATSAPP_VERSION_FETCH_TIMEOUT_MS = Number(process.env.NOTIFICATIONS_WHATSAPP_VERSION_FETCH_TIMEOUT_MS || 5000);
+const WHATSAPP_VERSION_REFRESH_MS = positiveNumber(
+  process.env.NOTIFICATIONS_WHATSAPP_VERSION_REFRESH_MS,
+  6 * 60 * 60 * 1000
+);
+const WHATSAPP_VERSION_FORCE_COOLDOWN_MS = positiveNumber(
+  process.env.NOTIFICATIONS_WHATSAPP_VERSION_FORCE_COOLDOWN_MS,
+  5 * 60 * 1000
+);
+const WHATSAPP_VERSION_FETCH_TIMEOUT_MS = positiveNumber(
+  process.env.NOTIFICATIONS_WHATSAPP_VERSION_FETCH_TIMEOUT_MS,
+  5 * 1000
+);
 const WORKER_LEASE_ID = process.env.NOTIFICATIONS_WORKER_LEASE_ID || "notifications-worker";
 const WORKER_OWNER_ID = process.env.NOTIFICATIONS_WORKER_INSTANCE_ID || crypto.randomUUID();
-const WORKER_OWNER_LABEL = inferWorkerLabel();
-const PREFERRED_WORKER_LABEL = process.env.NOTIFICATIONS_WORKER_PREFERRED_LABEL || "northflank";
-const HA_ENABLED = parseBoolean(process.env.NOTIFICATIONS_WORKER_HA_ENABLED, true);
-const WORKER_LEASE_TTL_MS = positiveNumber(process.env.NOTIFICATIONS_WORKER_LEASE_TTL_MS, 45 * 1000);
-const WORKER_LEASE_RENEW_MS = Math.min(
-  positiveNumber(process.env.NOTIFICATIONS_WORKER_LEASE_RENEW_MS, 10 * 1000),
-  Math.max(1000, Math.floor(WORKER_LEASE_TTL_MS / 2))
+const WORKER_OWNER_LABEL = workerConfig.ownerLabel;
+const PREFERRED_WORKER_LABEL = workerConfig.preferredLabel;
+const WORKER_ROLE = workerConfig.role;
+const HA_ENABLED = workerConfig.haEnabled;
+const STANDBY_ONLY = workerConfig.standbyOnly;
+const WORKER_LEASE_TTL_MS = workerConfig.leaseTtlMs;
+const WORKER_LEASE_RENEW_MS = workerConfig.leaseRenewMs;
+const WORKER_PREEMPT_GRACE_MS = workerConfig.preemptGraceMs;
+const STALE_PROCESSING_THRESHOLD_MS = positiveNumber(
+  process.env.NOTIFICATIONS_WORKER_STALE_PROCESSING_ALERT_MS,
+  10 * 60 * 1000
 );
-const WORKER_PREEMPT_GRACE_MS = positiveNumber(
-  process.env.NOTIFICATIONS_WORKER_PREEMPT_GRACE_MS,
-  WORKER_LEASE_RENEW_MS + 2500
+const STALE_PROCESSING_SCAN_MS = positiveNumber(
+  process.env.NOTIFICATIONS_WORKER_STALE_PROCESSING_SCAN_MS,
+  5 * 60 * 1000
 );
-
-const DEFAULT_EVENT_TEMPLATES = {
-  SUBSCRIPTION_EXPIRING:
-    "اشتراك الطالب {{studentName}} يقترب من الانتهاء بتاريخ {{date}}. المبلغ المستحق: {{amount}}."
-};
+const HEALTHCHECK_PING_INTERVAL_MS = positiveNumber(
+  process.env.NOTIFICATIONS_WORKER_HEALTHCHECK_PING_MS,
+  60 * 1000
+);
+const HEALTHCHECK_TIMEOUT_MS = positiveNumber(
+  process.env.NOTIFICATIONS_WORKER_HEALTHCHECK_TIMEOUT_MS,
+  5 * 1000
+);
 
 async function withTimeout(operation, timeoutMs, label) {
   let timer;
@@ -87,8 +163,12 @@ async function getWhatsAppProtocolVersion({ force = false } = {}) {
     && whatsAppVersionState
     && now - whatsAppVersionForcedAt < WHATSAPP_VERSION_FORCE_COOLDOWN_MS;
 
-  if ((!force && cachedIsFresh) || forceIsCoolingDown) return whatsAppVersionState;
-  if (whatsAppVersionRefreshPromise) return whatsAppVersionRefreshPromise;
+  if ((!force && cachedIsFresh) || forceIsCoolingDown) {
+    return whatsAppVersionState;
+  }
+  if (whatsAppVersionRefreshPromise) {
+    return whatsAppVersionRefreshPromise;
+  }
   if (force) whatsAppVersionForcedAt = now;
 
   whatsAppVersionRefreshPromise = (async () => {
@@ -105,13 +185,17 @@ async function getWhatsAppProtocolVersion({ force = false } = {}) {
       ),
       fallbackVersion: whatsAppVersionState?.version
     });
-    whatsAppVersionState = {
+    const nextState = {
       version: resolved.version,
       source: resolved.source,
       verified: resolved.verified,
       resolvedAt: Date.now()
     };
-    logger[resolved.verified ? "info" : "warn"]({
+    whatsAppVersionState = nextState;
+
+    const log = resolved.verified ? logger.info.bind(logger) : logger.warn.bind(logger);
+    log({
+      event: resolved.verified ? "whatsapp.version_resolved" : "whatsapp.version_degraded",
       source: resolved.source,
       verified: resolved.verified,
       revision: resolved.version[2],
@@ -119,7 +203,7 @@ async function getWhatsAppProtocolVersion({ force = false } = {}) {
     }, resolved.verified
       ? "resolved current WhatsApp Web protocol version"
       : "using cached or package WhatsApp Web protocol version");
-    return whatsAppVersionState;
+    return nextState;
   })();
 
   try {
@@ -129,17 +213,10 @@ async function getWhatsAppProtocolVersion({ force = false } = {}) {
   }
 }
 
-function parseBoolean(value, defaultValue = false) {
-  if (value === undefined || value === null || value === "") {
-    return defaultValue;
-  }
-  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
-}
-
-function positiveNumber(value, fallback) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
+const DEFAULT_EVENT_TEMPLATES = {
+  SUBSCRIPTION_EXPIRING:
+    "اشتراك الطالب {{studentName}} يقترب من الانتهاء بتاريخ {{date}}. المبلغ المستحق: {{amount}}."
+};
 
 function inferWorkerLabel() {
   if (process.env.NOTIFICATIONS_WORKER_INSTANCE_LABEL) {
@@ -161,14 +238,7 @@ function inferWorkerLabel() {
 }
 
 function getEncryptionKey() {
-  const raw = (
-    process.env.WHATSAPP_AUTH_ENCRYPTION_KEY
-    || process.env.NOTIFICATION_AUTH_ENCRYPTION_KEY
-    || process.env.SESSION_SECRET
-    || process.env.NEXTAUTH_SECRET
-    || process.env.JWT_SECRET
-    || ""
-  ).trim();
+  const raw = workerConfig.encryptionKey;
 
   if (!raw && process.env.NODE_ENV === "production") {
     throw new Error("Set WHATSAPP_AUTH_ENCRYPTION_KEY before running the notification worker in production.");
@@ -323,6 +393,39 @@ async function countAuthRows(tenantId) {
   return prisma.whatsAppAuthState.count({ where: { tenantId } }).catch(() => 0);
 }
 
+async function validateRuntimeReadiness() {
+  await prisma.notificationWorkerLease.findUnique({
+    where: { id: WORKER_LEASE_ID },
+    select: { id: true }
+  });
+  const encryptedAuthState = CARD_EXPORT_WORKER_ONLY ? null : await prisma.whatsAppAuthState.findFirst({
+    select: { encryptedValue: true }
+  });
+  if (!CARD_EXPORT_WORKER_ONLY && encryptedAuthState?.encryptedValue) {
+    deserializeAuthValue(decryptAuthValue(encryptedAuthState.encryptedValue));
+  }
+  if (CARD_EXPORT_WORKER_ENABLED) {
+    if (!CARD_EXPORT_APP_BASE_URL || !CARD_EXPORT_WORKER_SECRET) {
+      throw new Error("CARD_EXPORT_APP_BASE_URL and CARD_EXPORT_WORKER_SECRET are required when card export worker is enabled.");
+    }
+    const appUrl = new URL(CARD_EXPORT_APP_BASE_URL);
+    if (process.env.NODE_ENV === "production" && appUrl.protocol !== "https:") {
+      throw new Error("CARD_EXPORT_APP_BASE_URL must use HTTPS in production.");
+    }
+    if (process.env.NODE_ENV === "production" && CARD_EXPORT_WORKER_SECRET.length < 32) {
+      throw new Error("CARD_EXPORT_WORKER_SECRET must contain at least 32 characters in production.");
+    }
+    await prisma.studentCardExportJob.findFirst({ select: { id: true } });
+  }
+  logger.info({
+    event: "worker.preflight_passed",
+    authStateVerified: Boolean(encryptedAuthState),
+    standbyOnly: STANDBY_ONLY,
+    cardExportWorkerEnabled: CARD_EXPORT_WORKER_ENABLED,
+    cardExportOnly: CARD_EXPORT_WORKER_ONLY
+  }, "WhatsApp worker production preflight passed");
+}
+
 async function usePrismaAuthState(tenantId) {
   const credsEntry = await readAuthStateEntry(tenantId, "creds.json");
   if (credsEntry.status === "corrupt") {
@@ -411,13 +514,149 @@ function canRunLeaderWork() {
   return leaderActive && !shuttingDown;
 }
 
+function emitWorkerStatus(state, details = {}) {
+  const payload = {
+    type: WORKER_STATUS_MESSAGE_TYPE,
+    version: 1,
+    state,
+    at: new Date().toISOString(),
+    label: WORKER_OWNER_LABEL,
+    role: WORKER_ROLE,
+    standbyOnly: STANDBY_ONLY,
+    ...details
+  };
+
+  if (typeof process.send === "function" && process.connected) {
+    process.send(payload, (error) => {
+      if (error && error.code !== "ERR_IPC_CHANNEL_CLOSED") {
+        logger.warn({ event: "worker.status_emit_failed", error }, "failed to report worker status to service wrapper");
+      }
+    });
+  }
+}
+
+function healthcheckFailureUrl(rawUrl) {
+  const parsed = new URL(rawUrl);
+  parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/fail`;
+  return parsed.toString();
+}
+
+async function pingHealthcheck(name, rawUrl, { failure = false, force = false } = {}) {
+  if (!rawUrl) return;
+  const now = Date.now();
+  const lastPingAt = healthcheckLastPingAt.get(name) || 0;
+  if (!force && now - lastPingAt < HEALTHCHECK_PING_INTERVAL_MS) return;
+
+  healthcheckLastPingAt.set(name, now);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), HEALTHCHECK_TIMEOUT_MS);
+  try {
+    const response = await fetch(failure ? healthcheckFailureUrl(rawUrl) : rawUrl, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "User-Agent": "centrix-whatsapp-worker/1" }
+    });
+    if (!response.ok) {
+      throw new Error(`Healthcheck returned HTTP ${response.status}.`);
+    }
+  } catch (error) {
+    logger.warn({ event: "monitor.ping_failed", monitor: name, error }, "worker healthcheck ping failed");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function reportHealthyInstance(state) {
+  await pingHealthcheck("instance", process.env.HEALTHCHECKS_INSTANCE_PING_URL);
+  if (state === "leader") {
+    await Promise.all([
+      pingHealthcheck("leader", process.env.HEALTHCHECKS_LEADER_PING_URL),
+      pingHealthcheck("lease", process.env.HEALTHCHECKS_LEASE_PING_URL)
+    ]);
+  }
+}
+
+async function scanForStaleProcessingLocks() {
+  const now = Date.now();
+  if (now - staleLockScanAt < STALE_PROCESSING_SCAN_MS) return;
+  staleLockScanAt = now;
+
+  const staleBefore = new Date(now - STALE_PROCESSING_THRESHOLD_MS);
+  const [count, oldest] = await Promise.all([
+    prisma.notificationDelivery.count({
+      where: {
+        channel: "WHATSAPP",
+        status: "PROCESSING",
+        lockedAt: { lt: staleBefore }
+      }
+    }),
+    prisma.notificationDelivery.findFirst({
+      where: {
+        channel: "WHATSAPP",
+        status: "PROCESSING",
+        lockedAt: { lt: staleBefore }
+      },
+      orderBy: { lockedAt: "asc" },
+      select: { lockedAt: true }
+    })
+  ]);
+
+  if (count > 0) {
+    const oldestAgeMs = oldest?.lockedAt ? Math.max(0, now - oldest.lockedAt.getTime()) : null;
+    logger.warn({
+      event: "queue.stale_processing_detected",
+      count,
+      oldestAgeMs
+    }, "stale WhatsApp delivery locks require operator review");
+    await pingHealthcheck("queue", process.env.HEALTHCHECKS_QUEUE_PING_URL, {
+      failure: true,
+      force: true
+    });
+    return;
+  }
+
+  await pingHealthcheck("queue", process.env.HEALTHCHECKS_QUEUE_PING_URL);
+}
+
+async function verifyLeaseOwnership() {
+  if (!HA_ENABLED || STANDBY_ONLY || !leaderActive) return false;
+  const lease = await prisma.notificationWorkerLease.findFirst({
+    where: {
+      id: WORKER_LEASE_ID,
+      ownerId: WORKER_OWNER_ID,
+      expiresAt: { gt: new Date() }
+    },
+    select: { id: true }
+  });
+  return Boolean(lease);
+}
+
 function leaseHeartbeatData(now = new Date()) {
   return {
     ownerId: WORKER_OWNER_ID,
     ownerLabel: WORKER_OWNER_LABEL,
     heartbeatAt: now,
-    expiresAt: new Date(now.getTime() + WORKER_LEASE_TTL_MS)
+    expiresAt: new Date(now.getTime() + WORKER_LEASE_TTL_MS),
+    capabilities: { cardExport: CARD_EXPORT_WORKER_ENABLED }
   };
+}
+
+function logDevelopmentLeaseSnapshot(event, now, expiresAt, extra = {}) {
+  if (process.env.NODE_ENV === "production") return;
+  logger.info({
+    event,
+    pid: process.pid,
+    instanceLabel: WORKER_OWNER_LABEL,
+    role: WORKER_ROLE,
+    leaseId: WORKER_LEASE_ID,
+    acquiredAt: leaderAcquiredAt?.toISOString() || null,
+    heartbeatAt: now.toISOString(),
+    leaseExpiresAt: expiresAt.toISOString(),
+    remainingLeaseMs: Math.max(0, expiresAt.getTime() - now.getTime()),
+    capabilities: { cardExport: CARD_EXPORT_WORKER_ENABLED },
+    currentExportJobId: activeCardExportJobs.keys().next().value || null,
+    ...extra
+  }, "local notification worker lease state");
 }
 
 function leaseOwnershipData(now = new Date()) {
@@ -448,7 +687,7 @@ async function tryAcquireWorkerLease() {
       if (error?.code !== "P2002") {
         throw error;
       }
-      logger.debug({ error, ownerId: WORKER_OWNER_ID }, "worker lease create raced with another worker");
+      logger.debug({ event: "lease.create_raced", error, ownerLabel: WORKER_OWNER_LABEL }, "worker lease create raced with another worker");
       return { acquired: false, reason: "create-raced" };
     }
   }
@@ -474,7 +713,7 @@ async function tryAcquireWorkerLease() {
         ...(shouldPreemptForPreferredWorker ? [{ ownerLabel: null }, { ownerLabel: { not: PREFERRED_WORKER_LABEL } }] : [])
       ]
     },
-    data: ownedByThisWorker ? heartbeatData : ownershipData
+    data: ownedByThisWorker && !expired ? heartbeatData : ownershipData
   });
 
   if (updated.count !== 1) {
@@ -483,22 +722,26 @@ async function tryAcquireWorkerLease() {
 
   return {
     acquired: true,
-    reason: shouldPreemptForPreferredWorker ? "preferred-preempted" : ownedByThisWorker ? "renewed" : "expired"
+    reason: shouldPreemptForPreferredWorker ? "preferred-preempted" : expired ? "expired" : ownedByThisWorker ? "renewed" : "expired"
   };
 }
 
 async function renewWorkerLease() {
   const now = new Date();
+  const expiresAt = new Date(now.getTime() + WORKER_LEASE_TTL_MS);
   const updated = await prisma.notificationWorkerLease.updateMany({
     where: {
       id: WORKER_LEASE_ID,
-      ownerId: WORKER_OWNER_ID
+      ownerId: WORKER_OWNER_ID,
+      expiresAt: { gt: now }
     },
     data: {
       heartbeatAt: now,
-      expiresAt: new Date(now.getTime() + WORKER_LEASE_TTL_MS)
+      expiresAt,
+      capabilities: { cardExport: CARD_EXPORT_WORKER_ENABLED }
     }
   });
+  if (updated.count === 1) logDevelopmentLeaseSnapshot("lease.heartbeat", now, expiresAt);
   return updated.count === 1;
 }
 
@@ -534,28 +777,54 @@ function startLeaderWork(reason) {
   }
 
   leaderActive = true;
+  leaderAcquiredAt = new Date();
   logger.info({
-    ownerId: WORKER_OWNER_ID,
+    event: WORKER_ROLE === "fallback" && (reason === "expired" || reason === "created")
+      ? "fallback.activated"
+      : "lease.acquired",
     ownerLabel: WORKER_OWNER_LABEL,
+    role: WORKER_ROLE,
     reason,
     haEnabled: HA_ENABLED
   }, "notification worker became leader");
+  emitWorkerStatus("leader", { reason });
+  logDevelopmentLeaseSnapshot(
+    "lease.ready",
+    leaderAcquiredAt,
+    new Date(leaderAcquiredAt.getTime() + WORKER_LEASE_TTL_MS),
+    { reason }
+  );
+  void reportHealthyInstance("leader");
 
-  void pollConnectionRequests().catch((error) => logger.error({ error }, "connection poll failed"));
-  void processQueue().catch((error) => logger.error({ error }, "queue processing failed"));
-  void scanSubscriptionExpiring().catch((error) => logger.error({ error }, "subscription scan failed"));
-
-  addLeaderInterval(() => {
+  if (!CARD_EXPORT_WORKER_ONLY) {
     void pollConnectionRequests().catch((error) => logger.error({ error }, "connection poll failed"));
-  }, SESSION_POLL_INTERVAL_MS);
-
-  addLeaderInterval(() => {
     void processQueue().catch((error) => logger.error({ error }, "queue processing failed"));
-  }, POLL_INTERVAL_MS);
-
-  addLeaderInterval(() => {
     void scanSubscriptionExpiring().catch((error) => logger.error({ error }, "subscription scan failed"));
-  }, SUBSCRIPTION_SCAN_INTERVAL_MS);
+  }
+  if (CARD_EXPORT_WORKER_ENABLED) {
+    void processCardExportQueue().catch((error) => logger.error({ error }, "card export queue processing failed"));
+  }
+
+  if (!CARD_EXPORT_WORKER_ONLY) {
+    addLeaderInterval(() => {
+      void pollConnectionRequests().catch((error) => logger.error({ error }, "connection poll failed"));
+    }, SESSION_POLL_INTERVAL_MS);
+
+    addLeaderInterval(() => {
+      void processQueue().catch((error) => logger.error({ error }, "queue processing failed"));
+    }, POLL_INTERVAL_MS);
+
+    addLeaderInterval(() => {
+      void scanSubscriptionExpiring().catch((error) => logger.error({ error }, "subscription scan failed"));
+    }, SUBSCRIPTION_SCAN_INTERVAL_MS);
+  }
+
+  if (CARD_EXPORT_WORKER_ENABLED) {
+    addLeaderInterval(() => {
+      void processCardExportQueue().catch((error) => logger.error({ error }, "card export queue processing failed"));
+    }, CARD_EXPORT_WORKER_POLL_MS);
+  }
+
 }
 
 async function stopLeaderWork(reason) {
@@ -564,6 +833,7 @@ async function stopLeaderWork(reason) {
   }
 
   leaderActive = false;
+  leaderAcquiredAt = null;
   clearLeaderTimers();
 
   for (const timer of reconnectTimers.values()) {
@@ -578,29 +848,45 @@ async function stopLeaderWork(reason) {
     await socket.end(undefined).catch(() => undefined);
   }
 
+  await releaseActiveDeliveries(reason);
+  await releaseActiveCardExportJobs(reason);
+
+  if (!shuttingDown) {
+    await pingHealthcheck("lease", process.env.HEALTHCHECKS_LEASE_PING_URL, {
+      failure: true,
+      force: true
+    });
+  }
+
   logger.warn({
-    ownerId: WORKER_OWNER_ID,
+    event: "lease.lost",
     ownerLabel: WORKER_OWNER_LABEL,
+    role: WORKER_ROLE,
     reason
   }, "notification worker left leader mode");
+  if (!shuttingDown) emitWorkerStatus("degraded", { reason });
 }
 
 async function becomeLeader(reason) {
   const delayMs = reason === "preferred-preempted" ? WORKER_PREEMPT_GRACE_MS : 0;
   if (delayMs > 0) {
     logger.info({
-      ownerId: WORKER_OWNER_ID,
+      event: "primary.restoring",
       ownerLabel: WORKER_OWNER_LABEL,
       delayMs
     }, "preferred worker acquired lease; waiting for previous worker to yield");
     await sleep(delayMs);
     if (!(await renewWorkerLease())) {
-      logger.warn({ ownerId: WORKER_OWNER_ID, ownerLabel: WORKER_OWNER_LABEL }, "preferred worker lost lease during handoff");
+      logger.warn({ event: "lease.handoff_lost", ownerLabel: WORKER_OWNER_LABEL }, "preferred worker lost lease during handoff");
+      emitWorkerStatus("degraded", { reason: "handoff-lost" });
       return;
     }
   }
 
   startLeaderWork(reason);
+  if (reason === "preferred-preempted") {
+    logger.info({ event: "primary.restored", ownerLabel: WORKER_OWNER_LABEL }, "preferred worker restored leadership");
+  }
 }
 
 async function maintainWorkerLease() {
@@ -610,6 +896,17 @@ async function maintainWorkerLease() {
 
   leaseCycleRunning = true;
   try {
+    if (STANDBY_ONLY) {
+      const lease = await prisma.notificationWorkerLease.findUnique({
+        where: { id: WORKER_LEASE_ID },
+        select: { expiresAt: true }
+      });
+      const leaderPresent = Boolean(lease && lease.expiresAt.getTime() > Date.now());
+      emitWorkerStatus("standby-locked", { leaderPresent });
+      await reportHealthyInstance("standby-locked");
+      return;
+    }
+
     if (!HA_ENABLED) {
       startLeaderWork("ha-disabled");
       return;
@@ -619,6 +916,12 @@ async function maintainWorkerLease() {
       const renewed = await renewWorkerLease();
       if (!renewed) {
         await stopLeaderWork("lease-lost");
+      } else {
+        emitWorkerStatus("leader", { reason: "renewed" });
+        await Promise.all([
+          reportHealthyInstance("leader"),
+          scanForStaleProcessingLocks()
+        ]);
       }
       return;
     }
@@ -630,14 +933,16 @@ async function maintainWorkerLease() {
     }
 
     logger.debug({
-      ownerId: WORKER_OWNER_ID,
       ownerLabel: WORKER_OWNER_LABEL,
       leaseOwnerLabel: result.ownerLabel,
       reason: result.reason
     }, "notification worker standby; lease held by another worker");
+    emitWorkerStatus("standby", { leaderPresent: true });
+    await reportHealthyInstance("standby");
   } catch (error) {
-    logger.error({ error, ownerId: WORKER_OWNER_ID, ownerLabel: WORKER_OWNER_LABEL }, "worker lease cycle failed");
+    logger.error({ event: "db.degraded", error, ownerLabel: WORKER_OWNER_LABEL }, "worker lease cycle failed");
     await stopLeaderWork("lease-error");
+    emitWorkerStatus("degraded", { reason: "lease-error" });
   } finally {
     leaseCycleRunning = false;
   }
@@ -648,13 +953,31 @@ async function pauseActiveDeliveries(tenantId, errorMessage = "WhatsApp disconne
     where: {
       tenantId,
       channel: "WHATSAPP",
-      status: { in: ["QUEUED", "RETRY", "PROCESSING"] }
+      status: { in: ["QUEUED", "RETRY"] },
+      lockToken: null
     },
     data: {
       status: "PAUSED",
       errorMessage
     }
   });
+
+  const ownedDeliveries = [...activeDeliveries.values()].filter((delivery) => (
+    delivery.tenantId === tenantId
+    && shouldReleaseDeliveryOnLeadershipChange(delivery)
+  ));
+  await Promise.all(ownedDeliveries.map((delivery) => (
+    prisma.notificationDelivery.updateMany({
+      where: deliveryOwnershipWhere(delivery),
+      data: {
+        status: "PAUSED",
+        errorMessage,
+        lockToken: null,
+        lockedAt: null,
+        processingStartedAt: null
+      }
+    })
+  )));
 }
 
 function clearReconnectTimer(tenantId) {
@@ -711,7 +1034,7 @@ async function connectTenant(tenantId) {
     const protocolVersion = await getWhatsAppProtocolVersion();
     const socket = makeWASocket({
       auth: state,
-      logger,
+      logger: baileysLogger,
       markOnlineOnConnect: false,
       printQRInTerminal: false,
       version: protocolVersion.version
@@ -770,10 +1093,18 @@ async function connectTenant(tenantId) {
             data: {
               status: "QUEUED",
               errorMessage: null,
-              availableAt: new Date()
+              availableAt: new Date(),
+              lockToken: null,
+              lockedAt: null,
+              processingStartedAt: null
             }
           });
-          logger.info({ tenantId, phoneNumber, hasMe: Boolean(state.creds?.me?.id) }, "WhatsApp connected");
+          logger.info({
+            event: "whatsapp.connected",
+            tenantId,
+            hasPhoneNumber: Boolean(phoneNumber),
+            hasMe: Boolean(state.creds?.me?.id)
+          }, "WhatsApp connected");
         }
 
         if (update.connection === "close") {
@@ -794,7 +1125,7 @@ async function connectTenant(tenantId) {
           const protocolRejected = statusCode === 405 && unregisteredSession;
           const errorMessage = protocolRejected
             ? "تعذر بدء ربط واتساب بسبب رفض إصدار بروتوكول الاتصال. يقوم النظام بتحديث الإصدار وإعادة المحاولة تلقائيًا."
-            : update.lastDisconnect?.error?.message || null;
+            : sanitizeErrorMessage(update.lastDisconnect?.error?.message || "") || null;
           await waitForCredentialSave(tenantId);
 
           if (loggedOut) {
@@ -825,6 +1156,7 @@ async function connectTenant(tenantId) {
             });
             await pauseActiveDeliveries(tenantId);
             logger.warn({
+              event: "whatsapp.registration_protocol_rejected",
               tenantId,
               statusCode,
               versionChanged,
@@ -941,8 +1273,8 @@ async function refreshJobStatus(jobId) {
 }
 
 async function rescheduleForLimit(delivery, nextAvailableAt, message) {
-  await prisma.notificationDelivery.update({
-    where: { id: delivery.id },
+  return prisma.notificationDelivery.updateMany({
+    where: deliveryOwnershipWhere(delivery),
     data: {
       status: "QUEUED",
       lockToken: null,
@@ -957,11 +1289,11 @@ async function rescheduleForLimit(delivery, nextAvailableAt, message) {
 async function failOrRetry(delivery, error, setting) {
   const retryCount = delivery.retryCount + 1;
   const maxAttempts = Math.max(1, delivery.maxAttempts || setting?.retryMaxAttempts || 3);
-  const message = error instanceof Error ? error.message : String(error);
+  const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
 
   if (retryCount >= maxAttempts) {
-    await prisma.notificationDelivery.update({
-      where: { id: delivery.id },
+    const updated = await prisma.notificationDelivery.updateMany({
+      where: deliveryOwnershipWhere(delivery),
       data: {
         status: "FAILED",
         retryCount,
@@ -971,15 +1303,15 @@ async function failOrRetry(delivery, error, setting) {
         processingStartedAt: null
       }
     });
-    await refreshJobStatus(delivery.jobId);
+    if (updated.count === 1) await refreshJobStatus(delivery.jobId);
     return;
   }
 
   const baseDelay = Math.max(30, Number(setting?.retryBaseDelaySeconds ?? 300));
   const jitter = Math.floor(Math.random() * baseDelay);
   const delaySeconds = baseDelay * Math.pow(2, Math.max(0, retryCount - 1)) + jitter;
-  await prisma.notificationDelivery.update({
-    where: { id: delivery.id },
+  await prisma.notificationDelivery.updateMany({
+    where: deliveryOwnershipWhere(delivery),
     data: {
       status: "RETRY",
       retryCount,
@@ -998,11 +1330,7 @@ async function releaseDeliveryForLeadershipChange(delivery) {
   }
 
   await prisma.notificationDelivery.updateMany({
-    where: {
-      id: delivery.id,
-      status: "PROCESSING",
-      lockToken: delivery.lockToken
-    },
+    where: deliveryOwnershipWhere(delivery),
     data: {
       status: "QUEUED",
       lockToken: null,
@@ -1012,6 +1340,41 @@ async function releaseDeliveryForLeadershipChange(delivery) {
       errorMessage: "WhatsApp worker leadership changed"
     }
   });
+}
+
+async function releaseActiveDeliveries(reason) {
+  const deliveries = [...activeDeliveries.values()];
+  if (!deliveries.length) return;
+
+  await Promise.all(deliveries.map((delivery) => {
+    if (!shouldReleaseDeliveryOnLeadershipChange(delivery)) {
+      logger.error({
+        event: "queue.inflight_delivery_preserved",
+        deliveryId: delivery.id,
+        phase: delivery.processingPhase,
+        reason
+      }, "an in-flight WhatsApp delivery remains PROCESSING for operator review");
+      return Promise.resolve();
+    }
+
+    return releaseDeliveryForLeadershipChange(delivery).catch((error) => {
+      logger.error({
+        event: "queue.delivery_release_failed",
+        deliveryId: delivery.id,
+        reason,
+        error
+      }, "failed to release an active delivery after leadership changed");
+    });
+  }));
+  activeDeliveries.clear();
+}
+
+async function deliveryStillOwned(delivery) {
+  const row = await prisma.notificationDelivery.findFirst({
+    where: deliveryOwnershipWhere(delivery),
+    select: { id: true }
+  });
+  return Boolean(row);
 }
 
 async function processDelivery(delivery) {
@@ -1024,8 +1387,8 @@ async function processDelivery(delivery) {
     where: { tenantId: delivery.tenantId }
   });
   if (session?.status !== "CONNECTED") {
-    await prisma.notificationDelivery.update({
-      where: { id: delivery.id },
+    const updated = await prisma.notificationDelivery.updateMany({
+      where: deliveryOwnershipWhere(delivery),
       data: {
         status: "PAUSED",
         lockToken: null,
@@ -1034,15 +1397,15 @@ async function processDelivery(delivery) {
         errorMessage: "WhatsApp disconnected"
       }
     });
-    await refreshJobStatus(delivery.jobId);
+    if (updated.count === 1) await refreshJobStatus(delivery.jobId);
     return;
   }
 
   const socket = sockets.get(delivery.tenantId);
   if (!socket) {
     await connectTenant(delivery.tenantId);
-    await prisma.notificationDelivery.update({
-      where: { id: delivery.id },
+    await prisma.notificationDelivery.updateMany({
+      where: deliveryOwnershipWhere(delivery),
       data: {
         status: "PAUSED",
         lockToken: null,
@@ -1063,8 +1426,8 @@ async function processDelivery(delivery) {
     }
   });
   if (!setting?.enabled) {
-    await prisma.notificationDelivery.update({
-      where: { id: delivery.id },
+    const updated = await prisma.notificationDelivery.updateMany({
+      where: deliveryOwnershipWhere(delivery),
       data: {
         status: "PAUSED",
         lockToken: null,
@@ -1073,7 +1436,7 @@ async function processDelivery(delivery) {
         errorMessage: "WhatsApp notifications disabled"
       }
     });
-    await refreshJobStatus(delivery.jobId);
+    if (updated.count === 1) await refreshJobStatus(delivery.jobId);
     return;
   }
 
@@ -1099,25 +1462,70 @@ async function processDelivery(delivery) {
     return;
   }
 
-  try {
-    const jid = `${delivery.recipientAddress}@s.whatsapp.net`;
-    const result = await socket.sendMessage(jid, { text: delivery.renderedMessage });
-    await prisma.notificationDelivery.update({
-      where: { id: delivery.id },
-      data: {
-        status: "SENT",
-        providerMessageId: result?.key?.id || null,
-        sentAt: new Date(),
-        errorMessage: null,
-        lockToken: null,
-        lockedAt: null,
-        processingStartedAt: null
-      }
-    });
+  const [leaseOwned, lockOwned] = await Promise.all([
+    verifyLeaseOwnership(),
+    deliveryStillOwned(delivery)
+  ]);
+  if (!leaseOwned || !lockOwned) {
+    logger.warn({
+      event: "queue.delivery_fenced",
+      deliveryId: delivery.id,
+      leaseOwned,
+      lockOwned
+    }, "delivery send was fenced before contacting WhatsApp");
+    if (!leaseOwned) await stopLeaderWork("lease-verification-failed");
+    else await releaseDeliveryForLeadershipChange(delivery);
+    return;
+  }
+
+  const jid = `${delivery.recipientAddress}@s.whatsapp.net`;
+  const renderedText = delivery.eventType === "PRODUCT_SALE_PAYMENT_RECEIVED"
+    ? delivery.renderedMessage.replace(/\n?مرفق نسخة PDF محدثة من الفاتورة\.\s*$/u, "").trim()
+    : delivery.renderedMessage;
+  delivery.processingPhase = "sending";
+  const outcome = await executeIdempotentSend({
+    deliveryId: delivery.id,
+    send: (messageId) => socket.sendMessage(jid, { text: renderedText }, { messageId }),
+    persistAcknowledgement: async (providerMessageId) => {
+      delivery.processingPhase = "acknowledging";
+      const updated = await prisma.notificationDelivery.updateMany({
+        where: deliveryOwnershipWhere(delivery),
+        data: {
+          status: "SENT",
+          providerMessageId,
+          sentAt: new Date(),
+          errorMessage: null,
+          lockToken: null,
+          lockedAt: null,
+          processingStartedAt: null
+        }
+      });
+      return updated.count === 1;
+    },
+    handleSendFailure: async (error) => {
+      delivery.processingPhase = "retrying";
+      logger.error({
+        event: "whatsapp.send_failed",
+        error,
+        deliveryId: delivery.id
+      }, "failed to send WhatsApp notification");
+      await failOrRetry(delivery, error, setting);
+    }
+  });
+
+  if (outcome.status === "sent") {
     await refreshJobStatus(delivery.jobId);
-  } catch (error) {
-    logger.error({ error, deliveryId: delivery.id }, "failed to send WhatsApp notification");
-    await failOrRetry(delivery, error, setting);
+  } else if (outcome.status === "ack-conflict") {
+    logger.error({
+      event: "queue.sent_ack_conflict",
+      deliveryId: delivery.id
+    }, "WhatsApp accepted a message but the delivery lock was no longer owned");
+  } else if (outcome.status === "ack-persist-failed") {
+    logger.error({
+      event: "queue.sent_ack_persist_failed",
+      error: outcome.error,
+      deliveryId: delivery.id
+    }, "WhatsApp accepted a message but its database acknowledgement could not be stored");
   }
 }
 
@@ -1153,7 +1561,9 @@ async function claimDeliveries() {
       }
     });
     if (updated.count === 1) {
-      claimed.push({ ...row, lockToken });
+      const delivery = { ...row, lockToken, processingPhase: "claimed" };
+      activeDeliveries.set(delivery.id, delivery);
+      claimed.push(delivery);
     }
   }
 
@@ -1167,11 +1577,216 @@ async function processQueue() {
 
   const deliveries = await claimDeliveries();
   for (const delivery of deliveries) {
-    if (!canRunLeaderWork()) {
-      await releaseDeliveryForLeadershipChange(delivery);
-      continue;
+    try {
+      if (!canRunLeaderWork()) {
+        await releaseDeliveryForLeadershipChange(delivery);
+        continue;
+      }
+      await processDelivery(delivery);
+    } finally {
+      activeDeliveries.delete(delivery.id);
     }
-    await processDelivery(delivery);
+  }
+}
+
+async function releaseActiveCardExportJobs(reason) {
+  const active = [...activeCardExportJobs.values()];
+  activeCardExportJobs.clear();
+  for (const job of active) {
+    await prisma.$transaction(async (tx) => {
+      await tx.studentCardExportPart.updateMany({
+        where: { jobId: job.id, status: "PROCESSING" },
+        data: {
+          status: "RETRY",
+          phase: "RETRY",
+          progressUpdatedAt: new Date(),
+          errorCode: "CARD_EXPORT_WORKER_LEADERSHIP_CHANGED",
+          errorMessage: reason
+        }
+      });
+      await tx.studentCardExportJob.updateMany({
+        where: { id: job.id, lockToken: job.lockToken, status: "PROCESSING" },
+        data: {
+          status: "RETRY",
+          phase: "RETRY",
+          availableAt: new Date(),
+          lockToken: null,
+          lockedAt: null,
+          lockedBy: null,
+          currentPartNumber: null,
+          progressUpdatedAt: new Date(),
+          errorCode: "CARD_EXPORT_WORKER_LEADERSHIP_CHANGED",
+          errorMessage: reason
+        }
+      });
+    }).catch((error) => logger.warn({ event: "card_export.release_failed", error, jobId: job.id }, "failed to release card export job"));
+  }
+}
+
+async function recoverStaleCardExportJobs() {
+  if (!CARD_EXPORT_WORKER_ENABLED || !canRunLeaderWork()) return;
+  const cutoff = new Date(Date.now() - CARD_EXPORT_WORKER_STALE_LOCK_MS);
+  const stale = await prisma.studentCardExportJob.findMany({
+    where: { status: "PROCESSING", lockedAt: { lt: cutoff } },
+    select: { id: true, lockToken: true },
+    take: 20
+  });
+  for (const job of stale) {
+    await prisma.$transaction(async (tx) => {
+      await tx.studentCardExportPart.updateMany({
+        where: { jobId: job.id, status: "PROCESSING" },
+        data: {
+          status: "RETRY",
+          phase: "RETRY",
+          progressUpdatedAt: new Date(),
+          errorCode: "CARD_EXPORT_STALE_LOCK_RECOVERED",
+          errorMessage: "The previous worker stopped before completing this part."
+        }
+      });
+      await tx.studentCardExportJob.updateMany({
+        where: { id: job.id, status: "PROCESSING", lockToken: job.lockToken, lockedAt: { lt: cutoff } },
+        data: {
+          status: "RETRY",
+          phase: "RETRY",
+          availableAt: new Date(),
+          lockToken: null,
+          lockedAt: null,
+          lockedBy: null,
+          currentPartNumber: null,
+          progressUpdatedAt: new Date(),
+          errorCode: "CARD_EXPORT_STALE_LOCK_RECOVERED",
+          errorMessage: "The previous worker stopped before completing this part."
+        }
+      });
+    });
+    logger.warn({ event: "card_export.stale_lock_recovered", jobId: job.id }, "recovered stale card export job");
+  }
+}
+
+async function claimCardExportJob() {
+  if (!CARD_EXPORT_WORKER_ENABLED || !canRunLeaderWork()) return null;
+  const candidates = await prisma.studentCardExportJob.findMany({
+    where: {
+      status: { in: ["QUEUED", "RETRY"] },
+      availableAt: { lte: new Date() },
+      lockToken: null
+    },
+    orderBy: [{ availableAt: "asc" }, { createdAt: "asc" }],
+    take: 5
+  });
+  for (const candidate of candidates) {
+    const lockToken = crypto.randomUUID();
+    const claimed = await prisma.studentCardExportJob.updateMany({
+      where: { id: candidate.id, status: candidate.status, lockToken: null },
+      data: {
+        status: "PROCESSING",
+        phase: "LOADING_ASSETS",
+        lockToken,
+        lockedAt: new Date(),
+        lockedBy: WORKER_OWNER_LABEL,
+        progressUpdatedAt: new Date(),
+        startedAt: candidate.startedAt || new Date(),
+        attempts: { increment: 1 },
+        errorCode: null,
+        errorMessage: null
+      }
+    });
+    if (claimed.count === 1) {
+      const job = { id: candidate.id, lockToken };
+      activeCardExportJobs.set(candidate.id, job);
+      return job;
+    }
+  }
+  return null;
+}
+
+async function processClaimedCardExportJob(job) {
+  const endpoint = `${CARD_EXPORT_APP_BASE_URL}/api/internal/student-card-exports/process-next`;
+  try {
+    if (!(await verifyLeaseOwnership())) {
+      await stopLeaderWork("lease-invalid-before-card-export-request");
+      return;
+    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Card-Export-Worker-Secret": CARD_EXPORT_WORKER_SECRET,
+        "X-Notification-Worker-Lease-Id": WORKER_LEASE_ID,
+        "X-Notification-Worker-Owner-Id": WORKER_OWNER_ID,
+        "User-Agent": "centrix-card-export-worker/1"
+      },
+      body: JSON.stringify({ jobId: job.id, lockToken: job.lockToken }),
+      signal: AbortSignal.timeout(CARD_EXPORT_WORKER_REQUEST_TIMEOUT_MS)
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      logger.error({
+        event: "card_export.process_rejected",
+        jobId: job.id,
+        statusCode: response.status,
+        code: payload?.code || "CARD_EXPORT_PROCESS_REJECTED"
+      }, "card export processing endpoint rejected the job");
+      return;
+    }
+    logger.info({
+      event: payload?.data?.done ? "card_export.completed" : "card_export.part_completed",
+      jobId: job.id,
+      partNumber: payload?.data?.partNumber,
+      completedParts: payload?.data?.completedParts,
+      totalParts: payload?.data?.totalParts
+    }, "card export job progressed");
+  } catch (error) {
+    logger.error({ event: "card_export.request_failed", error, jobId: job.id }, "card export processing request failed");
+    await prisma.$transaction(async (tx) => {
+      await tx.studentCardExportPart.updateMany({
+        where: { jobId: job.id, status: "PROCESSING" },
+        data: {
+          status: "RETRY",
+          phase: "RETRY",
+          progressUpdatedAt: new Date(),
+          errorCode: "CARD_EXPORT_WORKER_REQUEST_FAILED",
+          errorMessage: "Worker request failed"
+        }
+      });
+      await tx.studentCardExportJob.updateMany({
+        where: { id: job.id, lockToken: job.lockToken, status: "PROCESSING" },
+        data: {
+          status: "RETRY",
+          phase: "RETRY",
+          availableAt: new Date(Date.now() + 5_000),
+          lockToken: null,
+          lockedAt: null,
+          lockedBy: null,
+          currentPartNumber: null,
+          progressUpdatedAt: new Date(),
+          errorCode: "CARD_EXPORT_WORKER_REQUEST_FAILED",
+          errorMessage: "Worker request failed"
+        }
+      });
+    });
+  } finally {
+    activeCardExportJobs.delete(job.id);
+  }
+}
+
+async function processCardExportQueue() {
+  if (!CARD_EXPORT_WORKER_ENABLED || !canRunLeaderWork() || cardExportQueueInFlight) return;
+  cardExportQueueInFlight = true;
+  try {
+    if (!(await verifyLeaseOwnership())) {
+      await stopLeaderWork("lease-invalid-before-card-export-claim");
+      return;
+    }
+    await recoverStaleCardExportJobs();
+    const job = await claimCardExportJob();
+    if (!job || !canRunLeaderWork()) {
+      if (job) await releaseActiveCardExportJobs("leadership changed before card export processing");
+      return;
+    }
+    await processClaimedCardExportJob(job);
+  } finally {
+    cardExportQueueInFlight = false;
   }
 }
 
@@ -1396,18 +2011,25 @@ async function scanSubscriptionExpiring() {
 
 async function main() {
   logger.info({
-    ownerId: WORKER_OWNER_ID,
+    event: "worker.started",
     ownerLabel: WORKER_OWNER_LABEL,
+    preferredLabel: PREFERRED_WORKER_LABEL,
+    role: WORKER_ROLE,
+    standbyOnly: STANDBY_ONLY,
     haEnabled: HA_ENABLED,
     leaseTtlMs: WORKER_LEASE_TTL_MS,
     leaseRenewMs: WORKER_LEASE_RENEW_MS
   }, "notification worker started");
+  emitWorkerStatus("starting");
 
+  await validateRuntimeReadiness();
   await maintainWorkerLease();
   if (HA_ENABLED) {
-    leaseTimer = setInterval(() => {
-      void maintainWorkerLease();
-    }, WORKER_LEASE_RENEW_MS);
+    leaseTimer = createLeaseHeartbeatScheduler({
+      intervalMs: WORKER_LEASE_RENEW_MS,
+      heartbeat: maintainWorkerLease,
+      onError: (error) => logger.error({ event: "lease.scheduler_failed", error }, "worker lease scheduler failed")
+    });
   }
 }
 
@@ -1417,10 +2039,11 @@ async function shutdownWorker(signal) {
   }
 
   shuttingDown = true;
-  logger.info({ signal, ownerId: WORKER_OWNER_ID, ownerLabel: WORKER_OWNER_LABEL }, "notification worker stopping");
+  logger.info({ event: "worker.stopping", signal, ownerLabel: WORKER_OWNER_LABEL }, "notification worker stopping");
+  emitWorkerStatus("degraded", { reason: "stopping" });
 
   if (leaseTimer) {
-    clearInterval(leaseTimer);
+    leaseTimer.stop();
     leaseTimer = null;
   }
 

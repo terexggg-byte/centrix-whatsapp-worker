@@ -7,325 +7,39 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  ADMIN
-  RECEPTION
-  TEACHER
-  STUDENT
-}
-
-enum StudentStatus {
-  ACTIVE
-  SUSPENDED
-  WITHDRAWN
-  PENDING_CARD_POINTS
-}
-
-enum StudentBookingStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
-
-enum StudentMonthlyPricingMode {
-  DEFAULT
-  DISCOUNT
-  OVERRIDE
-}
-
-enum CardPointTransactionType {
-  INITIAL_GRANT
-  ADMIN_ADD
-  STUDENT_CREATE_DEBIT
-  STUDENT_ACTIVATE_DEBIT
-  MANUAL_ADJUSTMENT
-}
-
-enum StudentBillingPauseReason {
-  SUSPENDED
-  WITHDRAWN
-}
-
-enum GroupStatus {
-  ACTIVE
-  FULL
-  PAUSED
-}
-
-enum SessionStatus {
-  COMPLETED
-  POSTPONED
-  CANCELED
-}
-
-enum AttendanceStatus {
-  PRESENT
-  ABSENT
-  LATE
-  EXCUSED
-}
-
-enum HomeworkRequirementScope {
-  WEEKLY
-  DATE_SPECIFIC
-}
-
-enum HomeworkSubmissionStatus {
-  SUBMITTED
-  NOT_SUBMITTED
-  INCOMPLETE
-}
-
-enum SubscriptionType {
-  MONTHLY
-  COURSE
-}
-
-enum PaymentMethod {
-  CASH
-  BANK_TRANSFER
-  WALLET
-}
-
-enum ExpenseCategory {
-  RENT
-  SALARIES
-  UTILITIES
-  MARKETING
-  MAINTENANCE
-  OTHER
-}
-
-enum AssistantMessageRole {
-  USER
-  ASSISTANT
-}
-
-enum TargetType {
-  ALL
-  STUDENTS
-  PARENTS
-  TEACHERS
-}
-
-enum NotificationChannel {
-  WHATSAPP
-  TELEGRAM
-  SMS
-  EMAIL
-  PUSH
-}
-
-enum NotificationEventType {
-  ATTENDANCE_PRESENT
-  ATTENDANCE_ABSENT
-  ATTENDANCE_LATE
-  BOOKING_APPROVED
-  BOOKING_REJECTED
-  PAYMENT_RECEIVED
-  PAYMENT_REMINDER
-  SUBSCRIPTION_EXPIRING
-  EXAM_RESULT_PUBLISHED
-  STUDENT_PERFORMANCE_MONTHLY_REPORT
-}
-
-enum NotificationRecipientMode {
-  PARENT_ONLY
-  STUDENT_ONLY
-  PARENT_FIRST
-  PARENT_AND_STUDENT
-}
-
-enum NotificationJobStatus {
-  QUEUED
-  PARTIAL
-  SENT
-  SKIPPED
-  FAILED
-}
-
-enum NotificationDeliveryStatus {
-  QUEUED
-  PROCESSING
-  SENT
-  RETRY
-  PAUSED
-  SKIPPED
-  FAILED
-}
-
-enum WhatsAppConnectionStatus {
-  CONNECTED
-  CONNECTING
-  DISCONNECTED
-}
-
-enum CenterAccountStatus {
-  ACTIVE
-  SUSPENDED
-  TRIAL
-  EXPIRED
-  ARCHIVED
-}
-
-enum PlanDuration {
-  MONTHLY
-  QUARTERLY
-  YEARLY
-  CUSTOM
-}
-
-enum PlatformSubscriptionStatus {
-  ACTIVE
-  TRIAL
-  EXPIRED
-  CANCELED
-}
-
-enum BillingStatus {
-  PAID
-  UNPAID
-  OVERDUE
-}
-
-enum BillingEntryType {
-  REVENUE
-  EXPENSE
-  OTHER
-}
-
-enum BillingEntrySource {
-  MANUAL
-  SUBSCRIPTION_CREATE
-  SUBSCRIPTION_REACTIVATE
-  SUBSCRIPTION_PERIOD_UPDATE
-}
-
-enum PlatformStaffRole {
-  MANAGER
-  VIEWER
-}
-
-enum PlatformStaffPermission {
-  DASHBOARD_READ
-  CENTERS_READ
-  CENTERS_STATUS_UPDATE
-  CENTERS_IMPERSONATE
-  CENTERS_ARCHIVED_READ
-  CENTERS_ARCHIVED_RESTORE
-  NOTIFICATIONS_READ
-  NOTIFICATIONS_WRITE
-  SUBSCRIPTIONS_READ
-  SUBSCRIPTIONS_CREATE
-  SUBSCRIPTIONS_STATUS_UPDATE
-  SUBSCRIPTIONS_PERIOD_UPDATE
-  SUBSCRIPTIONS_REORDER
-  SUBSCRIPTIONS_DELETE
-  SUBSCRIPTIONS_WRITE
-  BILLING_READ
-  BILLING_CREATE
-  BILLING_UPDATE
-  BILLING_WRITE
-  CARD_POINTS_READ
-  CARD_POINTS_ADD
-  CARD_POINTS_PRICE_UPDATE
-  CARD_POINTS_WRITE
-}
-
-enum PlatformStaffActivityEvent {
-  PLATFORM_STAFF_LOGIN_SUCCESS
-  PLATFORM_STAFF_LOGIN_FAILED
-  PLATFORM_STAFF_LOGOUT
-  PLATFORM_STAFF_IMPERSONATION_SUCCESS
-  PLATFORM_STAFF_IMPERSONATION_FAILED
-  SUPER_ADMIN_STAFF_CREATE
-  SUPER_ADMIN_STAFF_UPDATE_PROFILE
-  SUPER_ADMIN_STAFF_UPDATE_PERMISSIONS
-  SUPER_ADMIN_STAFF_TOGGLE_ACTIVE
-  SUPER_ADMIN_STAFF_RESET_PASSWORD
-  SUPER_ADMIN_STAFF_UPDATE_COMPENSATION
-  SUPER_ADMIN_STAFF_PAYROLL_SAVE
-  SUPER_ADMIN_STAFF_PAYROLL_UPDATE_STATUS
-}
-
-enum PlatformStaffActivityStatus {
-  SUCCESS
-  FAILED
-}
-
-enum PlatformStaffActorType {
-  SUPER_ADMIN
-  PLATFORM_STAFF
-  SYSTEM
-}
-
-enum PlatformStaffPayrollStatus {
-  UNPAID
-  PAID
-}
-
-enum CenterStaffPayrollStatus {
-  UNPAID
-  PAID
-}
-
-enum CenterStaffType {
-  SECRETARY
-  ASSISTANT
-}
-
-enum CenterPermission {
-  DASHBOARD_READ
-  STUDENTS_READ
-  STUDENTS_WRITE
-  GROUPS_READ
-  GROUPS_WRITE
-  PAYMENTS_READ
-  PAYMENTS_WRITE
-  ATTENDANCE_READ
-  ATTENDANCE_WRITE
-  EXAMS_READ
-  EXAMS_WRITE
-  REPORTS_READ
-  SETTINGS_READ
-  SETTINGS_BACKUP_RESTORE
-  SUBSCRIPTION_READ
-  NOTIFICATIONS_READ
-  NOTIFICATIONS_WRITE
-  LOGS_READ
-}
-
 model PlatformAdmin {
-  id          String    @id @default(cuid())
-  fullName    String
-  email       String    @unique
-  password    String
-  isActive    Boolean   @default(true)
-  lastLoginAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                    String    @id @default(cuid())
+  fullName              String
+  email                 String    @unique
+  password              String
+  isActive              Boolean   @default(true)
+  lastLoginAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  appearancePreferences Json?
 }
 
 model PlatformStaff {
-  id                 String                       @id @default(cuid())
-  fullName           String
-  email              String                       @unique
-  password           String
-  role               PlatformStaffRole
-  jobTitle           String?
-  phone              String?
-  baseSalary         Float                        @default(0)
-  salaryCurrency     String                       @default("EGP")
-  salaryDueDay       Int                          @default(1)
-  grantedPermissions PlatformStaffPermission[]    @default([])
-  revokedPermissions PlatformStaffPermission[]    @default([])
-  sessionVersion     Int                          @default(1)
-  isActive           Boolean                      @default(true)
-  lastLoginAt        DateTime?
-  createdAt          DateTime                     @default(now())
-  updatedAt          DateTime                     @updatedAt
-  activityLogs       PlatformStaffActivityLog[]
-  payrollRecords     PlatformStaffPayrollRecord[]
+  id                    String                       @id @default(cuid())
+  fullName              String
+  email                 String                       @unique
+  password              String
+  role                  PlatformStaffRole
+  isActive              Boolean                      @default(true)
+  lastLoginAt           DateTime?
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+  grantedPermissions    PlatformStaffPermission[]    @default([])
+  jobTitle              String?
+  phone                 String?
+  revokedPermissions    PlatformStaffPermission[]    @default([])
+  sessionVersion        Int                          @default(1)
+  baseSalary            Float                        @default(0)
+  salaryCurrency        String                       @default("EGP")
+  salaryDueDay          Int                          @default(1)
+  appearancePreferences Json?
+  activityLogs          PlatformStaffActivityLog[]
+  payrollRecords        PlatformStaffPayrollRecord[]
 
   @@index([role, isActive])
 }
@@ -342,7 +56,7 @@ model PlatformStaffActivityLog {
   message    String?
   payload    Json?
   createdAt  DateTime                    @default(now())
-  staff      PlatformStaff?              @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  staff      PlatformStaff?              @relation(fields: [staffId], references: [id])
 
   @@index([staffId, createdAt])
   @@index([staffEmail, createdAt])
@@ -370,71 +84,92 @@ model PlatformStaffPayrollRecord {
 }
 
 model Center {
-  id                            String                          @id @default(cuid())
-  code                          String                          @unique
-  name                          String
-  ownerName                     String
-  ownerEmail                    String
-  phone                         String
-  status                        CenterAccountStatus             @default(TRIAL)
-  subscriptionStart             DateTime?
-  subscriptionEnd               DateTime?
-  maxBranches                   Int                             @default(1)
-  maxUsers                      Int                             @default(3)
-  maxStudents                   Int?
-  maxClassrooms                 Int?
-  cardPointBalance              Int                             @default(0)
-  cardPointPriceOverride        Float?
-  logoUrl                       String?
-  primaryColor                  String?
-  secondaryColor                String?
-  contactNumbers                String[]
-  settings                      Json?
-  isArchived                    Boolean                         @default(false)
-  archivedAt                    DateTime?
-  archivedBy                    String?
-  archiveReason                 String?
-  statusBeforeArchive           CenterAccountStatus?
-  createdAt                     DateTime                        @default(now())
-  updatedAt                     DateTime                        @updatedAt
-  users                         User[]
-  branches                      Branch[]
-  classrooms                    Classroom[]
-  teachers                      Teacher[]
-  students                      Student[]
-  studentBookings               StudentBookingRequest[]
-  studentBookingCounters        StudentBookingNumberCounter[]
-  groups                        Group[]
-  groupSchedules                GroupSchedule[]
-  sessions                      Session[]
-  attendance                    AttendanceRecord[]
-  homeworkRequirements          HomeworkRequirement[]
-  homeworkSubmissions           HomeworkSubmission[]
-  studentPlans                  SubscriptionPlan[]
-  monthlyPrices                 GradeMonthlySubscriptionPrice[]
-  studentSubs                   StudentSubscription[]
-  studentBillingPauses          StudentBillingPause[]
-  payments                      Payment[]
-  expenses                      Expense[]
-  centerStaffPayrollRecords     CenterStaffPayrollRecord[]
-  centerAccessCode              CenterAccessCode?
-  exams                         Exam[]
-  examResults                   ExamResult[]
-  announcements                 Announcement[]
-  notificationJobs              NotificationJob[]
-  notificationDeliveries        NotificationDelivery[]
-  notificationEventSettings     NotificationEventSetting[]
-  notificationTemplates         NotificationTemplate[]
-  notificationChannelSettings   NotificationChannelSetting[]
-  whatsappSession               WhatsAppSession?
-  whatsappAuthStates            WhatsAppAuthState[]
-  assistantConversations        AssistantConversation[]
-  assistantMessages             AssistantMessage[]
-  auditLogs                     AuditLog[]
-  subscriptions                 CenterSubscription[]
-  billingRecords                BillingRecord[]
-  cardPointTransactions         CardPointTransaction[]
-  studentPerformanceReportSends StudentPerformanceReportSend[]
+  id                             String                          @id @default(cuid())
+  code                           String                          @unique
+  name                           String
+  ownerName                      String
+  ownerEmail                     String
+  phone                          String
+  status                         CenterAccountStatus             @default(TRIAL)
+  subscriptionStart              DateTime?
+  subscriptionEnd                DateTime?
+  maxBranches                    Int                             @default(1)
+  maxUsers                       Int                             @default(3)
+  maxStudents                    Int?
+  logoUrl                        String?
+  primaryColor                   String?
+  secondaryColor                 String?
+  contactNumbers                 String[]
+  settings                       Json?
+  isArchived                     Boolean                         @default(false)
+  createdAt                      DateTime                        @default(now())
+  updatedAt                      DateTime                        @updatedAt
+  archiveReason                  String?
+  archivedAt                     DateTime?
+  archivedBy                     String?
+  statusBeforeArchive            CenterAccountStatus?
+  maxClassrooms                  Int?
+  cardPointBalance               Int                             @default(0)
+  cardPointPriceOverride         Float?
+  announcements                  Announcement[]
+  assistantConversations         AssistantConversation[]
+  assistantMessages              AssistantMessage[]
+  attendance                     AttendanceRecord[]
+  makeupAttendances              MakeupAttendance[]
+  auditLogs                      AuditLog[]
+  billingRecords                 BillingRecord[]
+  branches                       Branch[]
+  cardPointTransactions          CardPointTransaction[]
+  centerAccessCode               CenterAccessCode?
+  brandKit                       CenterBrandKit?
+  centerStaffPayrollRecords      CenterStaffPayrollRecord[]
+  subscriptions                  CenterSubscription[]
+  certificateGenerationSnapshots CertificateGenerationSnapshot[]
+  certificateNumberCounters      CertificateNumberCounter[]
+  classrooms                     Classroom[]
+  exams                          Exam[]
+  examResults                    ExamResult[]
+  expenses                       Expense[]
+  monthlyPrices                  GradeMonthlySubscriptionPrice[]
+  groups                         Group[]
+  groupSchedules                 GroupSchedule[]
+  homeworkRequirements           HomeworkRequirement[]
+  homeworkSubmissions            HomeworkSubmission[]
+  inventoryDocumentCounters      InventoryDocumentCounter[]
+  inventoryMovements             InventoryMovement[]
+  inventoryStocks                InventoryStock[]
+  notificationChannelSettings    NotificationChannelSetting[]
+  notificationDeliveries         NotificationDelivery[]
+  notificationEventSettings      NotificationEventSetting[]
+  notificationJobs               NotificationJob[]
+  notificationTemplates          NotificationTemplate[]
+  payments                       Payment[]
+  products                       Product[]
+  productCategories              ProductCategory[]
+  productImageAssets             ProductImageAsset[]
+  productReservations            ProductReservation[]
+  productSales                   ProductSale[]
+  productSalePayments            ProductSalePayment[]
+  productUnits                   ProductUnit[]
+  purchaseOrders                 PurchaseOrder[]
+  scheduleSuspensions            ScheduleSuspension[]
+  sessions                       Session[]
+  students                       Student[]
+  studentBillingPauses           StudentBillingPause[]
+  studentBookingCounters         StudentBookingNumberCounter[]
+  studentBookings                StudentBookingRequest[]
+  studentCardCustomTemplates     StudentCardCustomTemplate[]
+  studentCardExportJobs          StudentCardExportJob[]
+  studentPerformanceReportSends  StudentPerformanceReportSend[]
+  studentProductAccounts         StudentProductAccount[]
+  studentProductAccountEntries   StudentProductAccountEntry[]
+  studentSubs                    StudentSubscription[]
+  studentPlans                   SubscriptionPlan[]
+  suppliers                      Supplier[]
+  teachers                       Teacher[]
+  users                          User[]
+  whatsappAuthStates             WhatsAppAuthState[]
+  whatsappSession                WhatsAppSession?
 
   @@index([status])
   @@index([subscriptionEnd])
@@ -444,24 +179,153 @@ model Center {
   @@index([cardPointBalance])
 }
 
+model StudentCardCustomTemplate {
+  id                   String                          @id @default(cuid())
+  centerId             String
+  name                 String
+  status               StudentCardCustomTemplateStatus @default(DRAFT)
+  sourceFileName       String
+  sourceContentType    String
+  sourceFileSize       Int
+  sourceChecksum       String
+  originalObjectKey    String
+  renderObjectKey      String
+  thumbnailObjectKey   String?
+  documentVersion      Int                             @default(2)
+  document             Json
+  editorSettings       Json
+  aiAnalysis           Json?
+  recoveryMetadata     Json?
+  namedVersionManifest Json?
+  createdBy            String
+  updatedBy            String
+  activatedAt          DateTime?
+  createdAt            DateTime                        @default(now())
+  updatedAt            DateTime                        @updatedAt
+  studioMetadata       Json?
+  center               Center                          @relation(fields: [centerId], references: [id], onDelete: Cascade)
+
+  @@index([centerId, status, updatedAt])
+  @@index([centerId, createdAt])
+}
+
+model StudentCardExportJob {
+  id                  String                     @id @default(cuid())
+  tenantId            String
+  requestedById       String
+  status              StudentCardExportJobStatus @default(QUEUED)
+  request             Json
+  settings            Json
+  templateFingerprint Json
+  side                String
+  totalCards          Int
+  totalPages          Int
+  totalParts          Int
+  completedParts      Int                        @default(0)
+  completedPages      Int                        @default(0)
+  phase               String                     @default("QUEUED")
+  processedUnits      Int                        @default(0)
+  totalUnits          Int                        @default(0)
+  processedPages      Int                        @default(0)
+  activeProcessingMs  Int                        @default(0)
+  currentPartNumber   Int?
+  progressUpdatedAt   DateTime?
+  metrics             Json?
+  attempts            Int                        @default(0)
+  maxAttempts         Int                        @default(3)
+  availableAt         DateTime                   @default(now())
+  lockedAt            DateTime?
+  lockToken           String?
+  lockedBy            String?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  expiresAt           DateTime?
+  errorCode           String?
+  errorMessage        String?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  center              Center                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parts               StudentCardExportPart[]
+
+  @@index([tenantId, status, createdAt])
+  @@index([status, availableAt, createdAt])
+  @@index([status, lockedAt])
+  @@index([expiresAt])
+}
+
+model StudentCardExportPart {
+  id            String                     @id @default(cuid())
+  jobId         String
+  partNumber    Int
+  status        StudentCardExportJobStatus @default(QUEUED)
+  studentIds    Json
+  pageStart     Int
+  pageEnd       Int
+  pageCount     Int
+  phase         String                     @default("QUEUED")
+  processedUnits Int                       @default(0)
+  totalUnits    Int                        @default(0)
+  processedPages Int                       @default(0)
+  activeProcessingMs Int                   @default(0)
+  progressUpdatedAt DateTime?
+  metrics       Json?
+  attempts      Int                        @default(0)
+  maxAttempts   Int                        @default(3)
+  blobObjectKey String?
+  fileName      String?
+  asciiFileName String?
+  contentLength Int?
+  checksum      String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  expiresAt     DateTime?
+  errorCode     String?
+  errorMessage  String?
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+  job           StudentCardExportJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, partNumber])
+  @@index([jobId, status, partNumber])
+  @@index([status, updatedAt])
+  @@index([expiresAt])
+}
+
+model CenterBrandKit {
+  id                     String   @id @default(cuid())
+  centerId               String   @unique
+  version                Int      @default(1)
+  revision               Int      @default(1)
+  definition             Json
+  primaryLogoObjectKey   String?
+  secondaryLogoObjectKey String?
+  createdBy              String
+  updatedBy              String
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  center                 Center   @relation(fields: [centerId], references: [id], onDelete: Cascade)
+
+  @@index([centerId, updatedAt])
+}
+
 model Plan {
   id              String               @id @default(cuid())
   name            String               @unique
   price           Float
-  discountedPrice Float?
-  isRecommended   Boolean              @default(false)
-  sortOrder       Int                  @default(0)
   duration        PlanDuration
-  durationDays    Int?
   features        Json?
   maxStudents     Int?
   maxUsers        Int
   maxBranches     Int
-  maxClassrooms   Int?
   isActive        Boolean              @default(true)
-  isDeleted       Boolean              @default(false)
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
+  durationDays    Int?
+  isDeleted       Boolean              @default(false)
+  maxClassrooms   Int?
+  discountedPrice Float?
+  isRecommended   Boolean              @default(false)
+  sortOrder       Int                  @default(0)
   subscriptions   CenterSubscription[]
 
   @@index([isActive])
@@ -473,7 +337,6 @@ model CenterSubscription {
   id                  String                     @id @default(cuid())
   centerId            String
   planId              String
-  queueOrder          Int                        @default(0)
   startDate           DateTime
   endDate             DateTime
   status              PlatformSubscriptionStatus @default(TRIAL)
@@ -481,9 +344,10 @@ model CenterSubscription {
   notes               String?
   createdAt           DateTime                   @default(now())
   updatedAt           DateTime                   @updatedAt
+  queueOrder          Int                        @default(0)
+  billingRecords      BillingRecord[]
   center              Center                     @relation(fields: [centerId], references: [id], onDelete: Cascade)
   plan                Plan                       @relation(fields: [planId], references: [id])
-  billingRecords      BillingRecord[]
 
   @@index([centerId, status])
   @@index([centerId, queueOrder])
@@ -494,9 +358,6 @@ model BillingRecord {
   id             String              @id @default(cuid())
   centerId       String
   subscriptionId String?
-  invoiceType    String              @default("GENERAL")
-  entryType      BillingEntryType    @default(REVENUE)
-  source         BillingEntrySource  @default(MANUAL)
   amount         Float
   currency       String              @default("EGP")
   dueDate        DateTime
@@ -506,8 +367,11 @@ model BillingRecord {
   note           String?
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
+  invoiceType    String              @default("GENERAL")
+  entryType      BillingEntryType    @default(REVENUE)
+  source         BillingEntrySource  @default(MANUAL)
   center         Center              @relation(fields: [centerId], references: [id], onDelete: Cascade)
-  subscription   CenterSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  subscription   CenterSubscription? @relation(fields: [subscriptionId], references: [id])
 
   @@unique([centerId, invoiceNo])
   @@index([centerId, status, dueDate])
@@ -528,30 +392,44 @@ model User {
   email                         String
   password                      String
   role                          Role
-  staffType                     CenterStaffType?
-  jobTitle                      String?
-  phone                         String?
-  baseSalary                    Float                          @default(0)
-  salaryCurrency                String                         @default("EGP")
-  salaryDueDay                  Int                            @default(1)
-  grantedPermissions            CenterPermission[]             @default([])
-  revokedPermissions            CenterPermission[]             @default([])
-  accessCodeHash                String?
-  accessCodeUpdatedAt           DateTime?
-  isActive                      Boolean                        @default(true)
   createdAt                     DateTime                       @default(now())
   updatedAt                     DateTime                       @updatedAt
-  center                        Center                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  payments                      Payment[]                      @relation("PaymentReceiver")
-  expensesCreated               Expense[]                      @relation("ExpenseCreator")
-  payrollRecords                CenterStaffPayrollRecord[]     @relation("CenterStaffPayrollStaff")
+  baseSalary                    Float                          @default(0)
+  isActive                      Boolean                        @default(true)
+  jobTitle                      String?
+  phone                         String?
+  salaryCurrency                String                         @default("EGP")
+  salaryDueDay                  Int                            @default(1)
+  accessCodeHash                String?
+  accessCodeUpdatedAt           DateTime?
+  grantedPermissions            CenterPermission[]             @default([])
+  revokedPermissions            CenterPermission[]             @default([])
+  staffType                     CenterStaffType?
+  appearancePreferences         Json?
   assistantConversations        AssistantConversation[]
   assistantMessages             AssistantMessage[]
   auditLogs                     AuditLog[]
-  studentPerformanceReportSends StudentPerformanceReportSend[] @relation("StudentPerformanceReportSender")
+  makeupAttendancesCancelled    MakeupAttendance[]             @relation("MakeupCancelledBy")
+  makeupAttendancesCreated      MakeupAttendance[]             @relation("MakeupCreatedBy")
+  payrollRecords                CenterStaffPayrollRecord[]     @relation("CenterStaffPayrollStaff")
+  expensesCreated               Expense[]                      @relation("ExpenseCreator")
+  inventoryMovementsCreated     InventoryMovement[]            @relation("InventoryMovementActor")
+  payments                      Payment[]                      @relation("PaymentReceiver")
+  productImageAssetsUploaded    ProductImageAsset[]            @relation("ProductImageAssetUploader")
+  productReservationsCancelled  ProductReservation[]           @relation("ProductReservationCanceller")
+  productReservationsCreated    ProductReservation[]           @relation("ProductReservationCreator")
+  productReservationsDelivered  ProductReservation[]           @relation("ProductReservationDeliverer")
+  productSalesCancelled         ProductSale[]                  @relation("ProductSaleCanceller")
+  productSalesCompleted         ProductSale[]                  @relation("ProductSaleSeller")
+  productSalePaymentsReceived   ProductSalePayment[]           @relation("ProductSalePaymentReceiver")
+  purchaseOrdersCreated         PurchaseOrder[]                @relation("PurchaseOrderCreator")
   reviewedStudentBookings       StudentBookingRequest[]        @relation("StudentBookingReviewer")
+  studentPerformanceReportSends StudentPerformanceReportSend[] @relation("StudentPerformanceReportSender")
+  productAccountEntriesCreated  StudentProductAccountEntry[]   @relation("StudentProductAccountEntryActor")
+  center                        Center                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, email])
+  @@unique([tenantId, id])
   @@index([tenantId, role])
 }
 
@@ -574,8 +452,8 @@ model Classroom {
   branchId        String
   name            String
   capacity        Int
-  center          Center                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   branch          Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  center          Center                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   groups          Group[]
   sessions        Session[]
   students        Student[]
@@ -593,9 +471,9 @@ model Teacher {
   subjects    String[]
   payoutMode  String
   payoutValue Float
-  center      Center    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   groups      Group[]
   sessions    Session[]
+  center      Center    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
 }
@@ -612,28 +490,34 @@ model Student {
   subjects               String[]
   joinedAt               DateTime                       @default(now())
   status                 StudentStatus                  @default(ACTIVE)
-  monthlyPricingMode     StudentMonthlyPricingMode      @default(DEFAULT)
-  monthlyDiscountAmount  Float                          @default(0)
-  monthlyPriceOverride   Float?
-  firstCyclePrice        Float?
-  firstCyclePriceUsedAt  DateTime?
   notes                  String?
   avatarUrl              String?
   groupId                String?
   classroomId            String?
-  center                 Center                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  group                  Group?                         @relation(fields: [groupId], references: [id])
-  classroom              Classroom?                     @relation(fields: [classroomId], references: [id])
-  subscriptions          StudentSubscription[]
-  billingPauses          StudentBillingPause[]
+  firstCyclePrice        Float?
+  firstCyclePriceUsedAt  DateTime?
+  monthlyDiscountAmount  Float                          @default(0)
+  monthlyPriceOverride   Float?
+  monthlyPricingMode     StudentMonthlyPricingMode      @default(DEFAULT)
   attendance             AttendanceRecord[]
+  makeupAttendances      MakeupAttendance[]
+  cardPointTransactions  CardPointTransaction[]
   examResults            ExamResult[]
   payments               Payment[]
-  performanceReportSends StudentPerformanceReportSend[]
+  productReservations    ProductReservation[]
+  productSales           ProductSale[]
+  classroom              Classroom?                     @relation(fields: [classroomId], references: [id])
+  group                  Group?                         @relation(fields: [groupId], references: [id])
+  center                 Center                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  billingPauses          StudentBillingPause[]
   bookingRequests        StudentBookingRequest[]
-  cardPointTransactions  CardPointTransaction[]
+  performanceReportSends StudentPerformanceReportSend[]
+  productAccount         StudentProductAccount?
+  productAccountEntries  StudentProductAccountEntry[]
+  subscriptions          StudentSubscription[]
 
   @@unique([tenantId, code])
+  @@unique([tenantId, id])
   @@index([tenantId, joinedAt])
   @@index([tenantId, grade, joinedAt])
   @@index([tenantId, groupId])
@@ -657,7 +541,7 @@ model CardPointTransaction {
   note         String?
   createdAt    DateTime                 @default(now())
   center       Center                   @relation(fields: [centerId], references: [id], onDelete: Cascade)
-  student      Student?                 @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  student      Student?                 @relation(fields: [studentId], references: [id])
 
   @@index([centerId, createdAt])
   @@index([centerId, type, createdAt])
@@ -688,12 +572,12 @@ model StudentBookingRequest {
   metadata          Json?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
+  classroom         Classroom?           @relation(fields: [classroomId], references: [id])
+  group             Group?               @relation(fields: [groupId], references: [id])
+  reviewedBy        User?                @relation("StudentBookingReviewer", fields: [reviewedByUserId], references: [id])
+  schedule          GroupSchedule?       @relation(fields: [scheduleId], references: [id])
+  student           Student?             @relation(fields: [studentId], references: [id])
   center            Center               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  student           Student?             @relation(fields: [studentId], references: [id], onDelete: SetNull)
-  group             Group?               @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  classroom         Classroom?           @relation(fields: [classroomId], references: [id], onDelete: SetNull)
-  schedule          GroupSchedule?       @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
-  reviewedBy        User?                @relation("StudentBookingReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, bookingNumber])
   @@index([tenantId, status, submittedAt])
@@ -725,9 +609,9 @@ model StudentPerformanceReportSend {
   parentPhone  String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  center       Center   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sentByUser   User?    @relation("StudentPerformanceReportSender", fields: [sentByUserId], references: [id])
   student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  sentByUser   User?    @relation("StudentPerformanceReportSender", fields: [sentByUserId], references: [id], onDelete: SetNull)
+  center       Center   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, studentId, month])
   @@index([tenantId, month])
@@ -743,12 +627,43 @@ model StudentBillingPause {
   endsAt    DateTime?
   createdAt DateTime                  @default(now())
   updatedAt DateTime                  @updatedAt
-  center    Center                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   student   Student                   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  center    Center                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, studentId, startsAt])
   @@index([tenantId, startsAt])
   @@index([tenantId, studentId, endsAt])
+}
+
+model ScheduleSuspension {
+  id                        String                    @id @default(cuid())
+  tenantId                  String
+  scope                     ScheduleSuspensionScope
+  branchId                  String?
+  grade                     String?
+  groupId                   String?
+  classroomId               String?
+  canonicalScopeKey         String
+  scopeLabel                String
+  reason                    String?
+  startsAt                  DateTime
+  plannedEndsAt             DateTime
+  effectiveEndsAt           DateTime
+  notificationRecipientMode NotificationRecipientMode @default(PARENT_ONLY)
+  revision                  Int                       @default(1)
+  canceledAt                DateTime?
+  endedEarlyAt              DateTime?
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+  occurrenceDateKey         String?
+  sourceScheduleId          String?
+  center                    Center                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, canonicalScopeKey, startsAt, effectiveEndsAt])
+  @@index([tenantId, startsAt, effectiveEndsAt])
+  @@index([tenantId, scope, branchId])
+  @@index([tenantId, groupId, classroomId])
+  @@index([tenantId, scope, sourceScheduleId, occurrenceDateKey], map: "ScheduleSuspension_occurrence_lookup_idx")
 }
 
 model Group {
@@ -765,17 +680,20 @@ model Group {
   startTime       String
   endTime         String
   status          GroupStatus             @default(ACTIVE)
-  center          Center                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  teacher         Teacher                 @relation(fields: [teacherId], references: [id])
+  exams           Exam[]
   branch          Branch?                 @relation(fields: [branchId], references: [id])
   classroom       Classroom?              @relation(fields: [classroomId], references: [id])
+  teacher         Teacher                 @relation(fields: [teacherId], references: [id])
+  center          Center                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  groupSchedules  GroupSchedule[]
+  originalMakeupAttendances    MakeupAttendance[] @relation("MakeupOriginalGroup")
+  replacementMakeupAttendances MakeupAttendance[] @relation("MakeupReplacementGroup")
+  sessions        Session[]
   students        Student[]
   studentBookings StudentBookingRequest[]
-  groupSchedules  GroupSchedule[]
-  sessions        Session[]
-  exams           Exam[]
 
   @@index([tenantId, name])
+  @@unique([tenantId, id])
 }
 
 model GroupSchedule {
@@ -783,17 +701,21 @@ model GroupSchedule {
   tenantId             String
   groupId              String
   classroomId          String
-  grade                String?
   days                 String[]
   startTime            String
   endTime              String
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
-  center               Center                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  grade                String?
   group                Group                   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  center               Center                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   homeworkRequirements HomeworkRequirement[]
+  sessions             Session[]              @relation("SessionSourceSchedule")
+  originalMakeupAttendances    MakeupAttendance[] @relation("MakeupOriginalSchedule")
+  replacementMakeupAttendances MakeupAttendance[] @relation("MakeupReplacementSchedule")
   studentBookings      StudentBookingRequest[]
 
+  @@unique([tenantId, id])
   @@index([tenantId, groupId])
   @@index([tenantId, classroomId])
 }
@@ -805,13 +727,13 @@ model HomeworkRequirement {
   day         String
   scope       HomeworkRequirementScope @default(WEEKLY)
   dateKey     String                   @default("")
-  title       String?
-  description String?
-  archivedAt  DateTime?
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
-  center      Center                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  archivedAt  DateTime?
+  description String?
+  title       String?
   schedule    GroupSchedule            @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  center      Center                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   submissions HomeworkSubmission[]
 
   @@index([tenantId, scheduleId, day, scope, dateKey])
@@ -829,12 +751,19 @@ model Session {
   startsAt        DateTime
   durationMinutes Int
   status          SessionStatus      @default(POSTPONED)
-  center          Center             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  group           Group              @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  teacher         Teacher            @relation(fields: [teacherId], references: [id])
-  classroom       Classroom          @relation(fields: [classroomId], references: [id])
+  sourceScheduleId String?
+  occurrenceDateKey String?
   attendance      AttendanceRecord[]
+  originalMakeupAttendances    MakeupAttendance[] @relation("MakeupOriginalSession")
+  replacementMakeupAttendances MakeupAttendance[] @relation("MakeupReplacementSession")
+  classroom       Classroom          @relation(fields: [classroomId], references: [id])
+  group           Group              @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  sourceSchedule  GroupSchedule?     @relation("SessionSourceSchedule", fields: [sourceScheduleId], references: [id], onDelete: SetNull)
+  teacher         Teacher            @relation(fields: [teacherId], references: [id])
+  center          Center             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, id])
+  @@unique([tenantId, sourceScheduleId, occurrenceDateKey])
   @@index([tenantId, startsAt])
   @@index([tenantId, groupId, startsAt])
 }
@@ -846,15 +775,70 @@ model AttendanceRecord {
   sessionId          String
   status             AttendanceStatus
   note               String?
-  center             Center              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  student            Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  makeupAttendanceId String?             @unique
   session            Session             @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student            Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  center             Center              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  makeupAttendance   MakeupAttendance?   @relation("MakeupReplacementAttendance", fields: [tenantId, makeupAttendanceId], references: [tenantId, id], onDelete: Restrict)
+  originalForMakeup  MakeupAttendance[]  @relation("MakeupOriginalAttendance")
   homeworkSubmission HomeworkSubmission?
 
   @@unique([studentId, sessionId])
+  @@unique([tenantId, id])
+  @@unique([tenantId, makeupAttendanceId])
   @@index([tenantId])
   @@index([tenantId, sessionId])
   @@index([tenantId, status])
+}
+
+model MakeupAttendance {
+  id                           String                 @id @default(cuid())
+  tenantId                     String
+  studentId                    String
+  type                         MakeupAttendanceType   @default(PREVIOUS_ABSENCE)
+  originalAttendanceId         String?
+  originalSessionId            String
+  originalScheduleId           String?
+  originalOccurrenceDateKey    String?
+  originalGroupId              String
+  replacementScheduleId        String?
+  replacementOccurrenceDateKey String
+  replacementSessionId         String
+  replacementGroupId           String
+  originalGrade                String
+  replacementGrade             String
+  validUntil                   DateTime
+  status                       MakeupAttendanceStatus @default(RESERVED)
+  createdById                  String
+  createdAt                    DateTime               @default(now())
+  usedAt                       DateTime?
+  cancelledAt                  DateTime?
+  cancelledById               String?
+  cancellationReason           String?
+  expiredAt                    DateTime?
+  upcomingStatus               UpcomingMakeupStatus?
+  upcomingCompletedAt          DateTime?
+  upcomingInvalidatedAt        DateTime?
+  upcomingInvalidationReason   String?
+  center                       Center                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  student                      Student                @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Cascade)
+  originalAttendance           AttendanceRecord?      @relation("MakeupOriginalAttendance", fields: [tenantId, originalAttendanceId], references: [tenantId, id], onDelete: Restrict)
+  originalSession              Session                @relation("MakeupOriginalSession", fields: [tenantId, originalSessionId], references: [tenantId, id], onDelete: Restrict)
+  originalSchedule             GroupSchedule?         @relation("MakeupOriginalSchedule", fields: [originalScheduleId], references: [id], onDelete: SetNull)
+  originalGroup                Group                  @relation("MakeupOriginalGroup", fields: [tenantId, originalGroupId], references: [tenantId, id], onDelete: Restrict)
+  replacementSchedule          GroupSchedule?         @relation("MakeupReplacementSchedule", fields: [replacementScheduleId], references: [id], onDelete: SetNull)
+  replacementSession           Session                @relation("MakeupReplacementSession", fields: [tenantId, replacementSessionId], references: [tenantId, id], onDelete: Restrict)
+  replacementGroup             Group                  @relation("MakeupReplacementGroup", fields: [tenantId, replacementGroupId], references: [tenantId, id], onDelete: Restrict)
+  replacementAttendance        AttendanceRecord?      @relation("MakeupReplacementAttendance")
+  createdBy                    User                   @relation("MakeupCreatedBy", fields: [tenantId, createdById], references: [tenantId, id], onDelete: Restrict)
+  cancelledBy                  User?                  @relation("MakeupCancelledBy", fields: [tenantId, cancelledById], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, studentId, status])
+  @@index([tenantId, originalAttendanceId, status])
+  @@index([tenantId, studentId, type, upcomingStatus])
+  @@index([tenantId, replacementSessionId, status])
+  @@index([tenantId, status, validUntil])
 }
 
 model HomeworkSubmission {
@@ -866,9 +850,9 @@ model HomeworkSubmission {
   note               String?
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
-  center             Center                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   attendanceRecord   AttendanceRecord         @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
-  requirement        HomeworkRequirement?     @relation(fields: [requirementId], references: [id], onDelete: SetNull)
+  requirement        HomeworkRequirement?     @relation(fields: [requirementId], references: [id])
+  center             Center                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, requirementId])
   @@index([tenantId, status])
@@ -881,8 +865,8 @@ model SubscriptionPlan {
   type          SubscriptionType
   amount        Float
   durationDays  Int
-  center        Center                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   subscriptions StudentSubscription[]
+  center        Center                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, name])
 }
@@ -910,10 +894,10 @@ model StudentSubscription {
   discount    Float            @default(0)
   totalAmount Float
   paidAmount  Float            @default(0)
-  center      Center           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  plan        SubscriptionPlan @relation(fields: [planId], references: [id])
   payments    Payment[]
+  plan        SubscriptionPlan @relation(fields: [planId], references: [id])
+  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  center      Center           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, renewalDate])
   @@index([tenantId, startDate])
@@ -930,29 +914,453 @@ model Payment {
   paidAt         DateTime            @default(now())
   receivedBy     String
   receiptNo      String
-  center         Center              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  receiver       User                @relation("PaymentReceiver", fields: [receivedBy], references: [id])
   student        Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
   subscription   StudentSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
-  receiver       User                @relation("PaymentReceiver", fields: [receivedBy], references: [id])
+  center         Center              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, receiptNo])
   @@index([tenantId, paidAt])
   @@index([tenantId, studentId])
 }
 
+model ProductCategory {
+  id          String    @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+  center      Center    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+}
+
+model ProductUnit {
+  id          String    @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+  center      Center    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+}
+
+model Supplier {
+  id              String          @id @default(cuid())
+  tenantId        String
+  name            String
+  phone           String?
+  address         String?
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  defaultProducts Product[]       @relation("ProductDefaultSupplier")
+  purchaseOrders  PurchaseOrder[]
+  center          Center          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+}
+
+model Product {
+  id                String               @id @default(cuid())
+  tenantId          String
+  name              String
+  sku               String?
+  barcode           String?
+  description       String?
+  categoryId        String
+  unitId            String
+  defaultSupplierId String?
+  openingExpenseId  String?              @unique
+  costPrice         Float                @default(0)
+  sellingPrice      Float                @default(0)
+  minimumStock      Int                  @default(0)
+  status            ProductStatus        @default(ACTIVE)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  movements         InventoryMovement[]
+  stock             InventoryStock?
+  category          ProductCategory      @relation(fields: [categoryId], references: [id])
+  defaultSupplier   Supplier?            @relation("ProductDefaultSupplier", fields: [defaultSupplierId], references: [id])
+  openingExpense    Expense?             @relation("ProductOpeningExpense", fields: [openingExpenseId], references: [id])
+  center            Center               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  unit              ProductUnit          @relation(fields: [unitId], references: [id])
+  imageAssets       ProductImageAsset[]
+  reservations      ProductReservation[]
+  saleItems         ProductSaleItem[]
+  purchaseItems     PurchaseOrderItem[]
+
+  @@unique([tenantId, sku])
+  @@unique([tenantId, barcode])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, categoryId, status])
+  @@index([tenantId, unitId])
+  @@index([tenantId, defaultSupplierId])
+  @@index([tenantId, name])
+}
+
+model ProductImageAsset {
+  id           String    @id @default(cuid())
+  tenantId     String
+  productId    String
+  objectKey    String    @unique
+  etag         String?
+  contentType  String
+  sizeBytes    Int
+  width        Int
+  height       Int
+  version      Int       @default(1)
+  isCurrent    Boolean   @default(true)
+  retiredAt    DateTime?
+  uploadedById String?
+  createdAt    DateTime  @default(now())
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  center       Center    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  uploadedBy   User?     @relation("ProductImageAssetUploader", fields: [uploadedById], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([productId, isCurrent])
+  @@index([tenantId, retiredAt])
+}
+
+model InventoryStock {
+  id        String   @id @default(cuid())
+  tenantId  String
+  productId String   @unique
+  onHand    Int      @default(0)
+  reserved  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  center    Center   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, onHand])
+  @@index([tenantId, reserved])
+}
+
+model PurchaseOrder {
+  id             String              @id @default(cuid())
+  tenantId       String
+  orderNumber    String
+  supplierId     String
+  createdById    String
+  expenseId      String?             @unique
+  idempotencyKey String
+  status         PurchaseOrderStatus @default(RECEIVED)
+  purchasedAt    DateTime            @default(now())
+  total          Float
+  notes          String?
+  createdAt      DateTime            @default(now())
+  movements      InventoryMovement[]
+  createdBy      User                @relation("PurchaseOrderCreator", fields: [createdById], references: [id])
+  expense        Expense?            @relation("PurchaseOrderExpense", fields: [expenseId], references: [id])
+  supplier       Supplier            @relation(fields: [supplierId], references: [id])
+  center         Center              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items          PurchaseOrderItem[]
+
+  @@unique([tenantId, orderNumber])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, purchasedAt])
+  @@index([tenantId, supplierId, purchasedAt])
+  @@index([tenantId, createdById, purchasedAt])
+}
+
+model PurchaseOrderItem {
+  id                  String        @id @default(cuid())
+  tenantId            String
+  purchaseOrderId     String
+  productId           String
+  productNameSnapshot String
+  skuSnapshot         String?
+  quantity            Int
+  purchasePrice       Float
+  lineTotal           Float
+  createdAt           DateTime      @default(now())
+  product             Product       @relation(fields: [productId], references: [id])
+  purchaseOrder       PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([purchaseOrderId, productId])
+  @@index([tenantId, productId, createdAt])
+}
+
+model ProductSale {
+  id                       String                       @id @default(cuid())
+  tenantId                 String
+  invoiceNumber            String
+  type                     ProductSaleType
+  studentId                String?
+  studentNameSnapshot      String?
+  studentCodeSnapshot      String?
+  groupNameSnapshot        String?
+  soldById                 String
+  cancelledById            String?
+  idempotencyKey           String
+  status                   ProductSaleStatus            @default(COMPLETED)
+  paymentStatus            ProductSalePaymentStatus
+  chargedToAccount         Boolean                      @default(false)
+  subtotal                 Float
+  discountTotal            Float                        @default(0)
+  total                    Float
+  amountPaid               Float                        @default(0)
+  amountDue                Float                        @default(0)
+  notes                    String?
+  soldAt                   DateTime                     @default(now())
+  cancelledAt              DateTime?
+  cancellationReason       String?
+  offlineRefundConfirmedAt DateTime?
+  createdAt                DateTime                     @default(now())
+  updatedAt                DateTime                     @updatedAt
+  movements                InventoryMovement[]
+  reservation              ProductReservation?          @relation("ReservationDeliveredSale")
+  cancelledBy              User?                        @relation("ProductSaleCanceller", fields: [cancelledById], references: [id], onDelete: Restrict)
+  soldBy                   User                         @relation("ProductSaleSeller", fields: [soldById], references: [id])
+  student                  Student?                     @relation(fields: [studentId], references: [id])
+  center                   Center                       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items                    ProductSaleItem[]
+  payments                 ProductSalePayment[]
+  accountEntries           StudentProductAccountEntry[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, soldAt])
+  @@index([tenantId, status, soldAt])
+  @@index([tenantId, paymentStatus, soldAt])
+  @@index([tenantId, studentId, soldAt])
+  @@index([tenantId, soldById, soldAt])
+}
+
+model ProductSaleItem {
+  id                   String      @id @default(cuid())
+  tenantId             String
+  saleId               String
+  productId            String
+  productNameSnapshot  String
+  skuSnapshot          String?
+  barcodeSnapshot      String?
+  categoryNameSnapshot String
+  unitNameSnapshot     String
+  quantity             Int
+  unitPrice            Float
+  discount             Float       @default(0)
+  lineTotal            Float
+  unitCost             Float
+  totalCost            Float
+  createdAt            DateTime    @default(now())
+  product              Product     @relation(fields: [productId], references: [id])
+  sale                 ProductSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@unique([saleId, productId])
+  @@index([tenantId, productId, createdAt])
+  @@index([tenantId, categoryNameSnapshot, createdAt])
+}
+
+model ProductSalePayment {
+  id                  String                      @id @default(cuid())
+  tenantId            String
+  saleId              String
+  receiptNumber       String
+  idempotencyKey      String
+  type                ProductSalePaymentType      @default(COLLECTION)
+  amount              Float
+  method              PaymentMethod
+  receivedById        String
+  reversalOfPaymentId String?                     @unique
+  note                String?
+  paidAt              DateTime                    @default(now())
+  createdAt           DateTime                    @default(now())
+  receivedBy          User                        @relation("ProductSalePaymentReceiver", fields: [receivedById], references: [id])
+  reversalOf          ProductSalePayment?         @relation("ProductSalePaymentReversal", fields: [reversalOfPaymentId], references: [id], onDelete: Restrict)
+  reversals           ProductSalePayment?         @relation("ProductSalePaymentReversal")
+  sale                ProductSale                 @relation(fields: [saleId], references: [id])
+  center              Center                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountEntry        StudentProductAccountEntry?
+
+  @@unique([tenantId, receiptNumber])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, saleId, paidAt])
+  @@index([tenantId, type, paidAt])
+  @@index([tenantId, receivedById, paidAt])
+}
+
+model StudentProductAccount {
+  id        String                       @id @default(cuid())
+  tenantId  String
+  studentId String?                      @unique
+  balance   Float                        @default(0)
+  createdAt DateTime                     @default(now())
+  updatedAt DateTime                     @updatedAt
+  student   Student?                     @relation(fields: [studentId], references: [id])
+  center    Center                       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entries   StudentProductAccountEntry[]
+
+  @@index([tenantId, balance])
+  @@index([tenantId, updatedAt])
+}
+
+model StudentProductAccountEntry {
+  id           String                         @id @default(cuid())
+  tenantId     String
+  accountId    String
+  studentId    String?
+  saleId       String?
+  paymentId    String?                        @unique
+  type         StudentProductAccountEntryType
+  amount       Float
+  balanceAfter Float
+  description  String?
+  actorId      String
+  occurredAt   DateTime                       @default(now())
+  createdAt    DateTime                       @default(now())
+  account      StudentProductAccount          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  actor        User                           @relation("StudentProductAccountEntryActor", fields: [actorId], references: [id])
+  payment      ProductSalePayment?            @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  sale         ProductSale?                   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  student      Student?                       @relation(fields: [studentId], references: [id])
+  center       Center                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, studentId, occurredAt])
+  @@index([accountId, occurredAt])
+  @@index([tenantId, saleId])
+  @@index([tenantId, type, occurredAt])
+}
+
+model ProductReservation {
+  id                  String                   @id @default(cuid())
+  tenantId            String
+  studentId           String?
+  studentNameSnapshot String
+  studentCodeSnapshot String
+  groupNameSnapshot   String?
+  productId           String
+  saleId              String?                  @unique
+  quantity            Int
+  status              ProductReservationStatus @default(PENDING)
+  notes               String?
+  createdById         String
+  deliveredById       String?
+  cancelledById       String?
+  availableAt         DateTime?
+  deliveredAt         DateTime?
+  cancelledAt         DateTime?
+  cancellationReason  String?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  movements           InventoryMovement[]
+  cancelledBy         User?                    @relation("ProductReservationCanceller", fields: [cancelledById], references: [id], onDelete: Restrict)
+  createdBy           User                     @relation("ProductReservationCreator", fields: [createdById], references: [id])
+  deliveredBy         User?                    @relation("ProductReservationDeliverer", fields: [deliveredById], references: [id], onDelete: Restrict)
+  product             Product                  @relation(fields: [productId], references: [id])
+  deliveredSale       ProductSale?             @relation("ReservationDeliveredSale", fields: [saleId], references: [id], onDelete: Restrict)
+  student             Student?                 @relation(fields: [studentId], references: [id])
+  center              Center                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, productId, status, createdAt])
+  @@index([tenantId, studentId, createdAt])
+}
+
+model InventoryMovement {
+  id              String                @id @default(cuid())
+  tenantId        String
+  productId       String
+  type            InventoryMovementType
+  quantity        Int
+  balanceAfter    Int
+  reservedAfter   Int
+  unitCost        Float?
+  reason          String?
+  referenceType   String?
+  referenceId     String?
+  purchaseOrderId String?
+  saleId          String?
+  reservationId   String?
+  userId          String
+  createdAt       DateTime              @default(now())
+  product         Product               @relation(fields: [productId], references: [id])
+  purchaseOrder   PurchaseOrder?        @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  reservation     ProductReservation?   @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  sale            ProductSale?          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  center          Center                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user            User                  @relation("InventoryMovementActor", fields: [userId], references: [id])
+
+  @@index([tenantId, productId, createdAt])
+  @@index([tenantId, type, createdAt])
+  @@index([tenantId, purchaseOrderId])
+  @@index([tenantId, saleId])
+  @@index([tenantId, reservationId])
+  @@index([tenantId, userId, createdAt])
+  @@index([tenantId, referenceType, referenceId])
+}
+
+model InventoryDocumentCounter {
+  id        String                @id @default(cuid())
+  tenantId  String
+  year      Int
+  type      InventoryDocumentType
+  nextValue Int                   @default(1)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  center    Center                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, year, type])
+  @@index([tenantId, type])
+}
+
+model CertificateNumberCounter {
+  id        String   @id @default(cuid())
+  tenantId  String
+  year      Int
+  nextValue Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  center    Center   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, year])
+  @@index([tenantId])
+}
+
+model CertificateGenerationSnapshot {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  generationKey      String
+  issueYear          Int
+  rendererVersion    Int      @default(2)
+  requestDigest      String
+  snapshotHash       String
+  certificateNumbers String[]
+  snapshot           Json
+  createdBy          String
+  createdAt          DateTime @default(now())
+  center             Center   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, generationKey])
+  @@index([tenantId, issueYear, createdAt])
+  @@index([tenantId, snapshotHash])
+}
+
 model Expense {
-  id            String                    @id @default(cuid())
-  tenantId      String
-  amount        Float
-  category      ExpenseCategory
-  note          String?
-  spentAt       DateTime                  @default(now())
-  createdBy     String
-  createdAt     DateTime                  @default(now())
-  updatedAt     DateTime                  @updatedAt
-  center        Center                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  creator       User                      @relation("ExpenseCreator", fields: [createdBy], references: [id], onDelete: Cascade)
-  payrollRecord CenterStaffPayrollRecord?
+  id                  String                    @id @default(cuid())
+  tenantId            String
+  amount              Float
+  category            ExpenseCategory
+  note                String?
+  spentAt             DateTime                  @default(now())
+  createdBy           String
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  payrollRecord       CenterStaffPayrollRecord?
+  creator             User                      @relation("ExpenseCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  center              Center                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  openingStockProduct Product?                  @relation("ProductOpeningExpense")
+  purchaseOrder       PurchaseOrder?            @relation("PurchaseOrderExpense")
 
   @@index([tenantId, spentAt])
   @@index([tenantId, category])
@@ -962,9 +1370,9 @@ model CenterAccessCode {
   id                      String   @id @default(cuid())
   tenantId                String   @unique
   ownerCodeHash           String
-  legacyAssistantCodeHash String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
+  legacyAssistantCodeHash String?
   center                  Center   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
@@ -983,9 +1391,9 @@ model CenterStaffPayrollRecord {
   expenseId          String?                  @unique
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
-  center             Center                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  expense            Expense?                 @relation(fields: [expenseId], references: [id])
   staff              User                     @relation("CenterStaffPayrollStaff", fields: [staffId], references: [id], onDelete: Cascade)
-  expense            Expense?                 @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+  center             Center                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([staffId, monthKey])
   @@index([tenantId, monthKey])
@@ -1000,8 +1408,8 @@ model Exam {
   groupId    String
   totalScore Float
   examDate   DateTime
-  center     Center       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   group      Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  center     Center       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   results    ExamResult[]
 
   @@index([tenantId, examDate])
@@ -1013,9 +1421,9 @@ model ExamResult {
   examId    String
   studentId String
   score     Float
-  center    Center  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   exam      Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
   student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  center    Center  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([examId, studentId])
   @@index([tenantId])
@@ -1027,11 +1435,11 @@ model Announcement {
   title     String
   body      String
   target    TargetType
-  type      String     @default("MANUAL")
-  readAt    DateTime?
+  createdAt DateTime   @default(now())
   dedupeKey String?
   metadata  Json?
-  createdAt DateTime   @default(now())
+  readAt    DateTime?
+  type      String     @default("MANUAL")
   center    Center     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, dedupeKey])
@@ -1052,8 +1460,8 @@ model NotificationJob {
   errorMessage     String?
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
-  center           Center                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   deliveries       NotificationDelivery[]
+  center           Center                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, eventType, createdAt])
@@ -1086,8 +1494,8 @@ model NotificationDelivery {
   metadata            Json?
   createdAt           DateTime                   @default(now())
   updatedAt           DateTime                   @updatedAt
-  center              Center                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   job                 NotificationJob            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  center              Center                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, status, availableAt])
   @@index([tenantId, eventType, createdAt])
@@ -1180,6 +1588,7 @@ model NotificationWorkerLease {
   ownerLabel  String?
   heartbeatAt DateTime
   expiresAt   DateTime
+  capabilities Json?
   startedAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -1236,4 +1645,426 @@ model AuditLog {
   @@index([tenantId, entity, entityId])
   @@index([tenantId, createdAt])
   @@index([tenantId, userId, createdAt])
+}
+
+enum Role {
+  ADMIN
+  RECEPTION
+  TEACHER
+  STUDENT
+}
+
+enum StudentStatus {
+  ACTIVE
+  SUSPENDED
+  WITHDRAWN
+  PENDING_CARD_POINTS
+}
+
+enum StudentBookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum StudentMonthlyPricingMode {
+  DEFAULT
+  DISCOUNT
+  OVERRIDE
+}
+
+enum CardPointTransactionType {
+  INITIAL_GRANT
+  ADMIN_ADD
+  STUDENT_CREATE_DEBIT
+  STUDENT_ACTIVATE_DEBIT
+  MANUAL_ADJUSTMENT
+}
+
+enum StudentBillingPauseReason {
+  SUSPENDED
+  WITHDRAWN
+}
+
+enum GroupStatus {
+  ACTIVE
+  FULL
+  PAUSED
+}
+
+enum SessionStatus {
+  COMPLETED
+  POSTPONED
+  CANCELED
+}
+
+enum ScheduleSuspensionScope {
+  CENTER
+  BRANCH
+  SCHEDULE
+  OCCURRENCE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum MakeupAttendanceStatus {
+  RESERVED
+  USED
+  CANCELLED
+  EXPIRED
+}
+
+enum MakeupAttendanceType {
+  PREVIOUS_ABSENCE
+  UPCOMING_SESSION
+}
+
+enum UpcomingMakeupStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum HomeworkRequirementScope {
+  WEEKLY
+  DATE_SPECIFIC
+}
+
+enum HomeworkSubmissionStatus {
+  SUBMITTED
+  NOT_SUBMITTED
+  INCOMPLETE
+}
+
+enum SubscriptionType {
+  MONTHLY
+  COURSE
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  WALLET
+}
+
+enum ExpenseCategory {
+  RENT
+  SALARIES
+  UTILITIES
+  MARKETING
+  MAINTENANCE
+  OTHER
+  INVENTORY_PURCHASE
+}
+
+enum ProductStatus {
+  ACTIVE
+  HIDDEN
+  ARCHIVED
+}
+
+enum InventoryMovementType {
+  OPENING_STOCK
+  PURCHASE
+  SALE
+  RETURN
+  ADJUSTMENT
+  DAMAGED
+  INVENTORY_COUNT
+  CANCELLED_SALE
+}
+
+enum PurchaseOrderStatus {
+  RECEIVED
+}
+
+enum ProductSaleType {
+  STUDENT
+  WALK_IN
+}
+
+enum ProductSaleStatus {
+  COMPLETED
+  CANCELLED
+}
+
+enum ProductSalePaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  REFUNDED
+}
+
+enum ProductSalePaymentType {
+  COLLECTION
+  OFFLINE_REFUND
+}
+
+enum StudentProductAccountEntryType {
+  SALE_CHARGE
+  PAYMENT
+  SALE_CANCELLATION
+  OFFLINE_REFUND
+}
+
+enum ProductReservationStatus {
+  PENDING
+  AVAILABLE
+  DELIVERED
+  CANCELLED
+}
+
+enum InventoryDocumentType {
+  PURCHASE_ORDER
+  SALE
+  PAYMENT_RECEIPT
+}
+
+enum AssistantMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum TargetType {
+  ALL
+  STUDENTS
+  PARENTS
+  TEACHERS
+}
+
+enum NotificationChannel {
+  WHATSAPP
+  TELEGRAM
+  SMS
+  EMAIL
+  PUSH
+}
+
+enum NotificationEventType {
+  ATTENDANCE_PRESENT
+  ATTENDANCE_ABSENT
+  BOOKING_APPROVED
+  BOOKING_REJECTED
+  PAYMENT_RECEIVED
+  PAYMENT_REMINDER
+  SUBSCRIPTION_EXPIRING
+  EXAM_RESULT_PUBLISHED
+  STUDENT_PERFORMANCE_MONTHLY_REPORT
+  ATTENDANCE_LATE
+  PRODUCT_SALE_COMPLETED
+  PRODUCT_SALE_PAYMENT_RECEIVED
+  SCHEDULE_SUSPENSION_CHANGED
+  SCHEDULE_SUSPENSION_CREATED
+  SCHEDULE_SUSPENSION_UPDATED
+  SCHEDULE_SUSPENSION_CANCELED
+  SCHEDULE_SUSPENSION_ENDED_EARLY
+  SCHEDULE_SUSPENSION_NEWLY_AFFECTED
+  SCHEDULE_SUSPENSION_NO_LONGER_AFFECTED
+}
+
+enum NotificationRecipientMode {
+  PARENT_ONLY
+  STUDENT_ONLY
+  PARENT_FIRST
+  PARENT_AND_STUDENT
+}
+
+enum NotificationJobStatus {
+  QUEUED
+  PARTIAL
+  SENT
+  SKIPPED
+  FAILED
+}
+
+enum NotificationDeliveryStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  RETRY
+  PAUSED
+  SKIPPED
+  FAILED
+}
+
+enum WhatsAppConnectionStatus {
+  CONNECTED
+  CONNECTING
+  DISCONNECTED
+}
+
+enum CenterAccountStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+  EXPIRED
+  ARCHIVED
+}
+
+enum StudentCardCustomTemplateStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum StudentCardExportJobStatus {
+  QUEUED
+  PROCESSING
+  RETRY
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum PlanDuration {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  CUSTOM
+}
+
+enum PlatformSubscriptionStatus {
+  ACTIVE
+  TRIAL
+  EXPIRED
+  CANCELED
+}
+
+enum BillingStatus {
+  PAID
+  UNPAID
+  OVERDUE
+}
+
+enum BillingEntryType {
+  REVENUE
+  EXPENSE
+  OTHER
+}
+
+enum BillingEntrySource {
+  MANUAL
+  SUBSCRIPTION_CREATE
+  SUBSCRIPTION_REACTIVATE
+  SUBSCRIPTION_PERIOD_UPDATE
+}
+
+enum PlatformStaffRole {
+  MANAGER
+  VIEWER
+}
+
+enum PlatformStaffPermission {
+  DASHBOARD_READ
+  CENTERS_READ
+  CENTERS_STATUS_UPDATE
+  CENTERS_IMPERSONATE
+  CENTERS_ARCHIVED_READ
+  CENTERS_ARCHIVED_RESTORE
+  NOTIFICATIONS_READ
+  SUBSCRIPTIONS_READ
+  SUBSCRIPTIONS_WRITE
+  BILLING_READ
+  BILLING_WRITE
+  SUBSCRIPTIONS_CREATE
+  SUBSCRIPTIONS_STATUS_UPDATE
+  SUBSCRIPTIONS_PERIOD_UPDATE
+  SUBSCRIPTIONS_REORDER
+  SUBSCRIPTIONS_DELETE
+  BILLING_CREATE
+  BILLING_UPDATE
+  CARD_POINTS_READ
+  CARD_POINTS_ADD
+  CARD_POINTS_PRICE_UPDATE
+  CARD_POINTS_WRITE
+  NOTIFICATIONS_WRITE
+}
+
+enum PlatformStaffActivityEvent {
+  PLATFORM_STAFF_LOGIN_SUCCESS
+  PLATFORM_STAFF_LOGIN_FAILED
+  PLATFORM_STAFF_LOGOUT
+  PLATFORM_STAFF_IMPERSONATION_SUCCESS
+  PLATFORM_STAFF_IMPERSONATION_FAILED
+  SUPER_ADMIN_STAFF_CREATE
+  SUPER_ADMIN_STAFF_UPDATE_PROFILE
+  SUPER_ADMIN_STAFF_UPDATE_PERMISSIONS
+  SUPER_ADMIN_STAFF_TOGGLE_ACTIVE
+  SUPER_ADMIN_STAFF_RESET_PASSWORD
+  SUPER_ADMIN_STAFF_UPDATE_COMPENSATION
+  SUPER_ADMIN_STAFF_PAYROLL_SAVE
+  SUPER_ADMIN_STAFF_PAYROLL_UPDATE_STATUS
+}
+
+enum PlatformStaffActivityStatus {
+  SUCCESS
+  FAILED
+}
+
+enum PlatformStaffActorType {
+  SUPER_ADMIN
+  PLATFORM_STAFF
+  SYSTEM
+}
+
+enum PlatformStaffPayrollStatus {
+  UNPAID
+  PAID
+}
+
+enum CenterStaffPayrollStatus {
+  UNPAID
+  PAID
+}
+
+enum CenterStaffType {
+  SECRETARY
+  ASSISTANT
+}
+
+enum CenterPermission {
+  DASHBOARD_READ
+  STUDENTS_READ
+  STUDENTS_WRITE
+  GROUPS_READ
+  GROUPS_WRITE
+  PAYMENTS_READ
+  PAYMENTS_WRITE
+  ATTENDANCE_READ
+  ATTENDANCE_WRITE
+  ATTENDANCE_MAKEUP_VIEW
+  ATTENDANCE_MAKEUP_CREATE
+  ATTENDANCE_MAKEUP_CANCEL
+  EXAMS_READ
+  EXAMS_WRITE
+  REPORTS_READ
+  SETTINGS_READ
+  SETTINGS_BACKUP_RESTORE
+  SUBSCRIPTION_READ
+  LOGS_READ
+  NOTIFICATIONS_READ
+  NOTIFICATIONS_WRITE
+  PRODUCTS_READ
+  PRODUCTS_CREATE
+  PRODUCTS_EDIT
+  PRODUCTS_DELETE
+  INVENTORY_PURCHASES_READ
+  INVENTORY_PURCHASE
+  INVENTORY_SALES_READ
+  INVENTORY_SELL
+  INVENTORY_SALES_CANCEL
+  INVENTORY_STOCK_ADJUST
+  INVENTORY_RESERVATIONS_MANAGE
+  INVENTORY_REPORTS_READ
+  INVENTORY_SUPPLIERS_MANAGE
+  INVENTORY_CATEGORIES_MANAGE
+  INVENTORY_UNITS_MANAGE
 }
