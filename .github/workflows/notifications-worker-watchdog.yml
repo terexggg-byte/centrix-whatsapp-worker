@@ -1,0 +1,53 @@
+name: Notifications Worker Watchdog
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: notifications-worker-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    name: Recover a missing notifications worker session
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELEASE_SHA: 2c920190719a4d6634ecfdc809817d5905d1a2d7
+      GH_TOKEN: ${{ github.token }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      NOTIFICATIONS_WORKER_LEASE_ID: notifications-worker
+      NOTIFICATIONS_WORKER_INSTANCE_LABEL: github-actions
+      SELF_HANDOFF_WORKFLOW_FILE: notifications-worker-self-handoff.yml
+      SELF_HANDOFF_WORKFLOW_REF: ${{ vars.NOTIFICATIONS_WORKER_ORCHESTRATOR_REF }}
+      WATCHDOG_CANDIDATE_FRESHNESS_MS: "1200000"
+
+    steps:
+      - name: Checkout orchestration repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check required configuration
+        shell: bash
+        run: |
+          test -n "$DATABASE_URL"
+          test -n "$SELF_HANDOFF_WORKFLOW_REF"
+
+      - name: Ensure PostgreSQL client exists
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes postgresql-client
+          fi
+          psql --version
+
+      - name: Evaluate PostgreSQL lease and recover if required
+        run: node scripts/notifications-self-handoff.mjs watchdog
