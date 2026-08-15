@@ -18,8 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     env:
+      RELEASE_SHA: 2c920190719a4d6634ecfdc809817d5905d1a2d7
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       WHATSAPP_AUTH_ENCRYPTION_KEY: ${{ secrets.WHATSAPP_AUTH_ENCRYPTION_KEY }}
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${{ secrets.WEB_PUSH_VAPID_PUBLIC_KEY }}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${{ secrets.WEB_PUSH_VAPID_PRIVATE_KEY }}
+      WEB_PUSH_VAPID_SUBJECT: ${{ secrets.WEB_PUSH_VAPID_SUBJECT }}
       DATA_SOURCE: prisma
       NODE_ENV: production
       NOTIFICATIONS_WORKER_LOG_LEVEL: info
@@ -40,9 +44,20 @@ jobs:
           test -n "$DATABASE_URL"
           test -n "$WHATSAPP_AUTH_ENCRYPTION_KEY"
           test -n "$CARD_EXPORT_WORKER_SECRET"
+          test -n "$WEB_PUSH_VAPID_PUBLIC_KEY"
+          test -n "$WEB_PUSH_VAPID_PRIVATE_KEY"
+          test -n "$WEB_PUSH_VAPID_SUBJECT"
 
-      - name: Checkout
+      - name: Checkout immutable Centrix RC
         uses: actions/checkout@v4
+        with:
+          repository: terexggg-byte/center-management-system-prod
+          ref: ${{ env.RELEASE_SHA }}
+          token: ${{ secrets.CENTER_MANAGEMENT_PROD_READ_TOKEN }}
+          persist-credentials: false
+
+      - name: Verify immutable release
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -53,16 +68,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Test WhatsApp protocol hotfix
-        run: node --test tests/whatsapp-version.test.mjs
       - name: Test worker lease and Card Export runtime
-        run: node --test tests/notifications-worker-runtime.test.mjs
+        run: npm run test:notifications-worker
 
       - name: Generate Prisma client
         run: npm run prisma:generate
 
       - name: Preflight database lease
-        run: npm run notifications:preflight
+        run: npm run ops:notifications:lease-status
 
       - name: Run worker
         run: |
