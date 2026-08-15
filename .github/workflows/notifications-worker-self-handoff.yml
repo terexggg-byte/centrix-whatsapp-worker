@@ -23,6 +23,11 @@ on:
         description: Predecessor GitHub run identifier for traceability only
         required: false
         type: string
+      handoffs_remaining:
+        description: Finite Canary handoffs, or unlimited for the production orchestration default
+        required: false
+        default: unlimited
+        type: string
 
 permissions:
   actions: write
@@ -40,17 +45,18 @@ jobs:
       SELF_HANDOFF_WORKFLOW_FILE: notifications-worker-self-handoff.yml
       SELF_HANDOFF_WORKFLOW_REF: ${{ github.ref_name }}
       SELF_HANDOFF_ORCHESTRATOR_SHA: ${{ github.sha }}
-      SELF_HANDOFF_START_MS: "17100000"
-      SELF_HANDOFF_TARGET_MS: "18000000"
-      SELF_HANDOFF_MAX_MS: "18900000"
-      SELF_HANDOFF_READINESS_TIMEOUT_MS: "1500000"
-      SELF_HANDOFF_GATE_TIMEOUT_MS: "1500000"
-      SELF_HANDOFF_GRACEFUL_TIMEOUT_MS: "300000"
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      WHATSAPP_AUTH_ENCRYPTION_KEY: ${{ secrets.WHATSAPP_AUTH_ENCRYPTION_KEY }}
-      WEB_PUSH_VAPID_PUBLIC_KEY: ${{ secrets.WEB_PUSH_VAPID_PUBLIC_KEY }}
-      WEB_PUSH_VAPID_PRIVATE_KEY: ${{ secrets.WEB_PUSH_VAPID_PRIVATE_KEY }}
-      WEB_PUSH_VAPID_SUBJECT: ${{ secrets.WEB_PUSH_VAPID_SUBJECT }}
+      SELF_HANDOFF_REMAINING: ${{ inputs.handoffs_remaining || 'unlimited' }}
+      SELF_HANDOFF_START_MS: "180000"
+      SELF_HANDOFF_TARGET_MS: "300000"
+      SELF_HANDOFF_MAX_MS: "480000"
+      SELF_HANDOFF_READINESS_TIMEOUT_MS: "300000"
+      SELF_HANDOFF_GATE_TIMEOUT_MS: "300000"
+      SELF_HANDOFF_GRACEFUL_TIMEOUT_MS: "120000"
+      DATABASE_URL: ${{ secrets.CANARY_DATABASE_URL }}
+      WHATSAPP_AUTH_ENCRYPTION_KEY: ${{ secrets.CANARY_WHATSAPP_AUTH_ENCRYPTION_KEY }}
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${{ secrets.CANARY_WEB_PUSH_VAPID_PUBLIC_KEY }}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${{ secrets.CANARY_WEB_PUSH_VAPID_PRIVATE_KEY }}
+      WEB_PUSH_VAPID_SUBJECT: mailto:centrix-canary@example.invalid
       DATA_SOURCE: prisma
       NODE_ENV: production
       NOTIFICATIONS_WORKER_LOG_LEVEL: info
@@ -63,10 +69,8 @@ jobs:
       NOTIFICATIONS_WORKER_STANDBY_ONLY: "false"
       NOTIFICATIONS_WORKER_LEASE_TTL_MS: "45000"
       NOTIFICATIONS_WORKER_LEASE_RENEW_MS: "10000"
-      NOTIFICATIONS_WORKER_TRAFFIC_NOT_BEFORE: ${{ vars.NOTIFICATIONS_WORKER_TRAFFIC_NOT_BEFORE }}
-      CARD_EXPORT_WORKER_ENABLED: "true"
-      CARD_EXPORT_APP_BASE_URL: https://center-management-system-prod.vercel.app
-      CARD_EXPORT_WORKER_SECRET: ${{ secrets.CARD_EXPORT_WORKER_SECRET }}
+      NOTIFICATIONS_WORKER_TRAFFIC_NOT_BEFORE: "2099-01-01T00:00:00.000Z"
+      CARD_EXPORT_WORKER_ENABLED: "false"
 
     steps:
       - name: Checkout orchestration repository
@@ -76,23 +80,22 @@ jobs:
 
       - name: Check required configuration
         env:
-          CENTER_MANAGEMENT_PROD_READ_TOKEN: ${{ secrets.CENTER_MANAGEMENT_PROD_READ_TOKEN }}
+          CENTER_MANAGEMENT_RC_READ_TOKEN: ${{ secrets.CENTER_MANAGEMENT_RC_READ_TOKEN }}
         shell: bash
         run: |
           test -n "$DATABASE_URL"
           test -n "$WHATSAPP_AUTH_ENCRYPTION_KEY"
-          test -n "$CARD_EXPORT_WORKER_SECRET"
           test -n "$WEB_PUSH_VAPID_PUBLIC_KEY"
           test -n "$WEB_PUSH_VAPID_PRIVATE_KEY"
           test -n "$WEB_PUSH_VAPID_SUBJECT"
-          test -n "$CENTER_MANAGEMENT_PROD_READ_TOKEN"
+          test -n "$CENTER_MANAGEMENT_RC_READ_TOKEN"
 
       - name: Checkout immutable Centrix RC
         uses: actions/checkout@v4
         with:
           repository: terexggg-byte/center-management-system-prod
           ref: 2c920190719a4d6634ecfdc809817d5905d1a2d7
-          token: ${{ secrets.CENTER_MANAGEMENT_PROD_READ_TOKEN }}
+          token: ${{ secrets.CENTER_MANAGEMENT_RC_READ_TOKEN }}
           persist-credentials: false
           path: centrix-rc
 
@@ -124,3 +127,48 @@ jobs:
 
       - name: Run self-handoff worker session
         run: node scripts/notifications-self-handoff.mjs session
+
+  canary-observer:
+    name: Observe PostgreSQL lease handoff without granting leadership
+    if: inputs.trigger == 'manual'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RELEASE_SHA: 2c920190719a4d6634ecfdc809817d5905d1a2d7
+      DATABASE_URL: ${{ secrets.CANARY_DATABASE_URL }}
+      SELF_HANDOFF_OBSERVER_OUTPUT: ${{ runner.temp }}/notifications-self-handoff-canary.jsonl
+      SELF_HANDOFF_OBSERVER_POLL_MS: "2000"
+      SELF_HANDOFF_OBSERVER_TIMEOUT_MS: "1500000"
+      SELF_HANDOFF_OBSERVER_EXPECTED_OWNERS: "2"
+      SELF_HANDOFF_OBSERVER_EXPECTED_HEARTBEATS: "4"
+
+    steps:
+      - name: Checkout orchestration repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check isolated database configuration
+        shell: bash
+        run: test -n "$DATABASE_URL"
+
+      - name: Ensure PostgreSQL client exists
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes postgresql-client
+          fi
+          psql --version
+
+      - name: Observe PostgreSQL server-time leadership
+        run: node scripts/notifications-self-handoff.mjs observer
+
+      - name: Upload Canary evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notifications-self-handoff-canary-${{ github.run_id }}
+          path: ${{ runner.temp }}/notifications-self-handoff-canary.jsonl
+          if-no-files-found: error
+          retention-days: 7

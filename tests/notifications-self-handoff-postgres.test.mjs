@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import { fork, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import {
   readPostgresWatchdogSnapshot,
+  runCanaryObserver,
   runLeaseGate,
   runWatchdog
 } from "../scripts/notifications-self-handoff.mjs";
@@ -53,7 +56,7 @@ async function leaseSnapshot(leaseId) {
   return JSON.parse(raw.split("\n").filter(Boolean).at(-1));
 }
 
-function spawnRcWorker({ leaseId, ownerId }) {
+function spawnRcWorker({ leaseId, ownerId, trafficNotBefore = "" }) {
   const messages = [];
   const waiters = [];
   const child = fork(path.join(rcDir, "scripts", "notifications-worker.mjs"), [], {
@@ -80,6 +83,7 @@ function spawnRcWorker({ leaseId, ownerId }) {
       NOTIFICATIONS_WORKER_POLL_MS: "60000",
       NOTIFICATIONS_WORKER_SESSION_POLL_MS: "60000",
       NOTIFICATIONS_SUBSCRIPTION_SCAN_MS: "60000",
+      NOTIFICATIONS_WORKER_TRAFFIC_NOT_BEFORE: trafficNotBefore,
       CARD_EXPORT_WORKER_ENABLED: "false"
     },
     stdio: ["ignore", "ignore", "ignore", "ipc"]
@@ -211,6 +215,75 @@ test("PostgreSQL-only gate hands off after expiration and an atomic race elects 
     if (databaseUrl) {
       await sql(`DELETE FROM "NotificationWorkerLease" WHERE "id" = '${leaseId.replaceAll("'", "''")}';`);
     }
+  }
+});
+
+test("Canary observer proves two held leaders, zero traffic and final zero leadership", {
+  skip: !databaseUrl || !rcDir,
+  timeout: 30_000
+}, async () => {
+  const leaseId = `notifications-canary-observer-${Date.now()}`;
+  const outputDirectory = await mkdtemp(path.join(os.tmpdir(), "centrix-canary-observer-"));
+  const outputPath = path.join(outputDirectory, "evidence.jsonl");
+  const hold = "2099-01-01T00:00:00.000Z";
+  let predecessor;
+  let successor;
+  try {
+    const observer = runCanaryObserver({
+      env: {
+        ...process.env,
+        DATABASE_URL: databaseUrl,
+        PSQL_BIN: psql,
+        RELEASE_SHA: releaseSha,
+        SELF_HANDOFF_OBSERVER_LEASE_ID: leaseId,
+        SELF_HANDOFF_OBSERVER_OUTPUT: outputPath,
+        SELF_HANDOFF_OBSERVER_POLL_MS: "100",
+        SELF_HANDOFF_OBSERVER_TIMEOUT_MS: "25000",
+        SELF_HANDOFF_OBSERVER_EXPECTED_OWNERS: "2",
+        SELF_HANDOFF_OBSERVER_EXPECTED_HEARTBEATS: "4"
+      }
+    });
+
+    predecessor = spawnRcWorker({ leaseId, ownerId: "gha-100-1", trafficNotBefore: hold });
+    await predecessor.waitFor("leader-held");
+    await collectThreeRenewals(leaseId, "gha-100-1");
+    await stopWorker(predecessor);
+    predecessor = null;
+
+    const gate = await runLeaseGate({
+      env: {
+        ...process.env,
+        CENTRIX_RC_DIR: rcDir,
+        DATABASE_URL: databaseUrl,
+        NOTIFICATIONS_WORKER_LEASE_ID: leaseId,
+        NOTIFICATIONS_WORKER_LEASE_RENEW_MS: "500",
+        SELF_HANDOFF_GATE_TIMEOUT_MS: "8000",
+        SELF_HANDOFF_GATE_RETRY_MS: "100",
+        SELF_HANDOFF_GATE_PROBE_TIMEOUT_MS: "3000"
+      }
+    });
+    assert.equal(gate.open, true);
+
+    successor = spawnRcWorker({ leaseId, ownerId: "gha-101-1", trafficNotBefore: hold });
+    await successor.waitFor("leader-held");
+    await collectThreeRenewals(leaseId, "gha-101-1");
+    await stopWorker(successor);
+    successor = null;
+
+    const summary = await observer;
+    assert.equal(summary.success, true);
+    assert.equal(summary.maximumActiveLeaders, 1);
+    assert.equal(summary.finalActiveLeaders, 0);
+    assert.deepEqual(summary.owners.map((owner) => owner.ownerId), ["gha-100-1", "gha-101-1"]);
+    assert.ok(summary.owners.every((owner) => owner.heartbeatSamples >= 4));
+    assert.ok(summary.handoffGapMs >= 0 && summary.handoffGapMs < 5_000, `unexpected handoff gap ${summary.handoffGapMs}`);
+    const evidence = await readFile(outputPath, "utf8");
+    assert.match(evidence, /"trafficActive":false/);
+    assert.match(evidence, /"type":"summary","success":true/);
+  } finally {
+    await Promise.all([stopWorker(predecessor), stopWorker(successor)]);
+    await sql(`DELETE FROM "NotificationWorkerLease" WHERE "id" = '${leaseId.replaceAll("'", "''")}';`);
+    await rm(outputDirectory, { recursive: true, force: true });
   }
 });
 

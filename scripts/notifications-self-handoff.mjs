@@ -2,6 +2,7 @@
 
 import { fork, spawn } from "node:child_process";
 import crypto from "node:crypto";
+import { appendFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import process from "node:process";
@@ -25,6 +26,19 @@ function positiveNumber(value, fallback, name) {
   return parsed;
 }
 
+function optionalHandoffCount(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized || normalized === "unlimited") return null;
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error("SELF_HANDOFF_REMAINING must be a non-negative integer or unlimited.");
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error("SELF_HANDOFF_REMAINING exceeds the supported integer range.");
+  }
+  return parsed;
+}
+
 function required(value, name) {
   const normalized = String(value || "").trim();
   if (!normalized) throw new Error(`${name} is required.`);
@@ -33,6 +47,13 @@ function required(value, name) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function postgresTimestampMs(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return Number.NaN;
+  const withZone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized) ? normalized : `${normalized}Z`;
+  return Date.parse(withZone);
 }
 
 function redactError(error) {
@@ -91,18 +112,27 @@ export class GitHubActionsClient {
     return payload;
   }
 
-  async dispatchSession({ workflowFile, ref, sessionId, predecessorRunId = "", trigger }) {
+  async dispatchSession({
+    workflowFile,
+    ref,
+    sessionId,
+    predecessorRunId = "",
+    trigger,
+    handoffsRemaining = null
+  }) {
+    const inputs = {
+      session_id: sessionId,
+      predecessor_run_id: String(predecessorRunId || ""),
+      trigger
+    };
+    if (handoffsRemaining !== null) inputs.handoffs_remaining = String(handoffsRemaining);
     const payload = await this.request(
       `/repos/${this.repository}/actions/workflows/${encodeURIComponent(workflowFile)}/dispatches`,
       {
         method: "POST",
         body: {
           ref,
-          inputs: {
-            session_id: sessionId,
-            predecessor_run_id: String(predecessorRunId || ""),
-            trigger
-          }
+          inputs
         }
       }
     );
@@ -226,6 +256,7 @@ export async function runWorkerSession({
   if (!(handoffStartMs < targetStopMs && targetStopMs < maximumStopMs)) {
     throw new Error("Self-handoff timing must satisfy start < target < maximum.");
   }
+  const handoffsRemaining = optionalHandoffCount(env.SELF_HANDOFF_REMAINING);
 
   const github = new GitHubActionsClient({
     token: env.GH_TOKEN,
@@ -339,7 +370,8 @@ export async function runWorkerSession({
             ref: workflowRef,
             sessionId,
             predecessorRunId: runId,
-            trigger: "handoff"
+            trigger: "handoff",
+            handoffsRemaining: handoffsRemaining === null ? null : handoffsRemaining - 1
           });
           successorRunId = dispatched.runId;
           log("handoff.dispatched", { runId, successorRunId });
@@ -365,7 +397,7 @@ export async function runWorkerSession({
 
     while (true) {
       const elapsedMs = monotonicNow() - leaderStartedAt;
-      if (!handoffStarted && elapsedMs >= handoffStartMs) startHandoff();
+      if (!handoffStarted && handoffsRemaining !== 0 && elapsedMs >= handoffStartMs) startHandoff();
       if (superseded) {
         handoffCancelled = true;
         const stopped = await terminateChild(child, { gracefulTimeoutMs });
@@ -380,6 +412,16 @@ export async function runWorkerSession({
           hadLeadership: true,
           successorRunId,
           orchestrationReady: true,
+          forced: false
+        };
+      }
+      if (elapsedMs >= targetStopMs && handoffsRemaining === 0) {
+        const stopped = await terminateChild(child, { gracefulTimeoutMs });
+        if (stopped.forced) throw new Error("Worker required SIGKILL while completing the terminal canary session.");
+        return {
+          outcome: "terminal-session-complete",
+          hadLeadership: true,
+          orchestrationReady: false,
           forced: false
         };
       }
@@ -595,12 +637,155 @@ export async function runWatchdog({ env = process.env, fetchImpl = fetch } = {})
   return { action: "dispatch", reason: decision.reason, runId: dispatched.runId };
 }
 
+const CANARY_OBSERVER_SQL = String.raw`
+WITH db AS (
+  SELECT transaction_timestamp() AS db_now
+), lease AS (
+  SELECT "ownerId", "ownerLabel", "heartbeatAt", "expiresAt", "capabilities"
+  FROM "NotificationWorkerLease"
+  WHERE "id" = :'lease_id'
+), counts AS (
+  SELECT
+    (SELECT COUNT(*)::integer FROM "NotificationDelivery" WHERE "status" = 'PROCESSING') AS processing,
+    (SELECT COUNT(*)::integer FROM "NotificationDelivery" WHERE "status" = 'QUEUED') AS queued,
+    (SELECT COUNT(*)::integer FROM "NotificationJob") AS jobs,
+    (SELECT COUNT(*)::integer FROM "WhatsAppAuthState") AS auth_states
+)
+SELECT json_build_object(
+  'dbNow', db.db_now,
+  'activeLeaders', COUNT(lease.*) FILTER (WHERE lease."expiresAt" > db.db_now),
+  'ownerId', MAX(lease."ownerId"),
+  'ownerLabel', MAX(lease."ownerLabel"),
+  'heartbeatAt', MAX(lease."heartbeatAt"),
+  'expiresAt', MAX(lease."expiresAt"),
+  'release', MAX(lease."capabilities"->>'release'),
+  'trafficActive', COALESCE(BOOL_OR((lease."capabilities"->>'trafficActive')::boolean), false),
+  'processing', MAX(counts.processing),
+  'queued', MAX(counts.queued),
+  'jobs', MAX(counts.jobs),
+  'authStates', MAX(counts.auth_states)
+)::text
+FROM db
+CROSS JOIN counts
+LEFT JOIN lease ON true
+GROUP BY db.db_now;
+`;
+
+export async function readCanaryObserverSnapshot({ env = process.env } = {}) {
+  const databaseUrl = required(env.DATABASE_URL, "DATABASE_URL");
+  const leaseId = String(env.SELF_HANDOFF_OBSERVER_LEASE_ID || "notifications-worker").trim();
+  if (!/^[A-Za-z0-9_.:-]+$/.test(leaseId)) {
+    throw new Error("SELF_HANDOFF_OBSERVER_LEASE_ID contains unsupported characters.");
+  }
+  const sql = CANARY_OBSERVER_SQL.replace(":'lease_id'", `'${leaseId}'`);
+  const result = await runProcess(String(env.PSQL_BIN || "psql").trim(), [
+    `--dbname=${databaseUrl}`,
+    "--no-psqlrc",
+    "--set=ON_ERROR_STOP=1",
+    "--tuples-only",
+    "--no-align",
+    "--command",
+    sql
+  ], {
+    cwd: process.cwd(),
+    env: { ...env, PGCONNECT_TIMEOUT: env.PGCONNECT_TIMEOUT || "10" },
+    timeoutMs: positiveNumber(env.SELF_HANDOFF_OBSERVER_DB_TIMEOUT_MS, 30_000, "SELF_HANDOFF_OBSERVER_DB_TIMEOUT_MS")
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(`PostgreSQL canary observer query failed (${result.exitCode ?? result.signal}).`);
+  }
+  const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
+  if (!line) throw new Error("PostgreSQL canary observer returned no snapshot.");
+  return JSON.parse(line);
+}
+
+export async function runCanaryObserver({ env = process.env, sleepImpl = sleep } = {}) {
+  const outputPath = path.resolve(required(env.SELF_HANDOFF_OBSERVER_OUTPUT, "SELF_HANDOFF_OBSERVER_OUTPUT"));
+  const expectedRelease = required(env.RELEASE_SHA || DEFAULT_RELEASE_SHA, "RELEASE_SHA");
+  const expectedOwners = positiveNumber(env.SELF_HANDOFF_OBSERVER_EXPECTED_OWNERS, 2, "SELF_HANDOFF_OBSERVER_EXPECTED_OWNERS");
+  const expectedHeartbeats = positiveNumber(
+    env.SELF_HANDOFF_OBSERVER_EXPECTED_HEARTBEATS,
+    4,
+    "SELF_HANDOFF_OBSERVER_EXPECTED_HEARTBEATS"
+  );
+  const pollMs = positiveNumber(env.SELF_HANDOFF_OBSERVER_POLL_MS, 2_000, "SELF_HANDOFF_OBSERVER_POLL_MS");
+  const timeoutMs = positiveNumber(env.SELF_HANDOFF_OBSERVER_TIMEOUT_MS, 25 * 60_000, "SELF_HANDOFF_OBSERVER_TIMEOUT_MS");
+  const deadline = performance.now() + timeoutMs;
+  const owners = new Map();
+  const ownerOrder = [];
+  let maximumActiveLeaders = 0;
+  let finalZeroSamples = 0;
+  let firstOwnerLastExpiresAt = null;
+  let secondOwnerFirstDbNow = null;
+  await writeFile(outputPath, "", { mode: 0o600 });
+
+  while (performance.now() < deadline) {
+    const snapshot = await readCanaryObserverSnapshot({ env });
+    await appendFile(outputPath, `${JSON.stringify({ type: "snapshot", ...snapshot })}\n`);
+    maximumActiveLeaders = Math.max(maximumActiveLeaders, Number(snapshot.activeLeaders || 0));
+    if (maximumActiveLeaders > 1) throw new Error("Canary observed more than one active PostgreSQL lease leader.");
+    for (const [name, value] of [
+      ["PROCESSING", snapshot.processing],
+      ["QUEUED", snapshot.queued],
+      ["NotificationJob", snapshot.jobs],
+      ["WhatsAppAuthState", snapshot.authStates]
+    ]) {
+      if (Number(value) !== 0) throw new Error(`Canary isolation violated: ${name} count became ${value}.`);
+    }
+    if (snapshot.trafficActive) throw new Error("Canary worker reported trafficActive=true.");
+
+    if (Number(snapshot.activeLeaders) === 1) {
+      if (snapshot.release !== expectedRelease) throw new Error("Canary leader release SHA mismatch.");
+      if (snapshot.ownerLabel !== "github-actions") throw new Error("Canary leader owner label mismatch.");
+      const ownerId = required(snapshot.ownerId, "canary ownerId");
+      if (!/^gha-\d+-\d+$/.test(ownerId)) throw new Error(`Unexpected canary owner ID: ${ownerId}.`);
+      if (!owners.has(ownerId)) {
+        owners.set(ownerId, new Set());
+        ownerOrder.push(ownerId);
+      }
+      if (ownerOrder.length > expectedOwners) throw new Error("Canary created more worker owners than expected.");
+      if (snapshot.heartbeatAt) owners.get(ownerId).add(snapshot.heartbeatAt);
+      if (ownerOrder.length === 1 && snapshot.expiresAt) firstOwnerLastExpiresAt = snapshot.expiresAt;
+      if (ownerOrder.length === 2 && secondOwnerFirstDbNow === null) secondOwnerFirstDbNow = snapshot.dbNow;
+      finalZeroSamples = 0;
+    } else if (ownerOrder.length === expectedOwners) {
+      finalZeroSamples += 1;
+    }
+
+    const enoughHeartbeats = ownerOrder.length === expectedOwners
+      && ownerOrder.every((ownerId) => owners.get(ownerId).size >= expectedHeartbeats);
+    if (enoughHeartbeats && finalZeroSamples >= 2) {
+      const handoffGapMs = firstOwnerLastExpiresAt && secondOwnerFirstDbNow
+        ? postgresTimestampMs(secondOwnerFirstDbNow) - postgresTimestampMs(firstOwnerLastExpiresAt)
+        : null;
+      const summary = {
+        type: "summary",
+        success: true,
+        release: expectedRelease,
+        owners: ownerOrder.map((ownerId) => ({ ownerId, heartbeatSamples: owners.get(ownerId).size })),
+        maximumActiveLeaders,
+        finalActiveLeaders: 0,
+        finalProcessing: 0,
+        handoffGapMs,
+        firstOwnerLastExpiresAt,
+        secondOwnerFirstDbNow
+      };
+      await appendFile(outputPath, `${JSON.stringify(summary)}\n`);
+      log("canary.observer_complete", summary);
+      return summary;
+    }
+    await sleepImpl(pollMs);
+  }
+  throw new Error("Canary observer timed out before proving two graceful lease owners and final zero leadership.");
+}
+
 async function main() {
   const command = process.argv[2];
   if (command === "session") return runWorkerSession();
   if (command === "gate") return runLeaseGate();
   if (command === "watchdog") return runWatchdog();
-  throw new Error("Usage: notifications-self-handoff.mjs <session|gate|watchdog>");
+  if (command === "observer") return runCanaryObserver();
+  throw new Error("Usage: notifications-self-handoff.mjs <session|gate|watchdog|observer>");
 }
 
 const isEntrypoint = process.argv[1]

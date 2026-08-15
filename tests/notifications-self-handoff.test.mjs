@@ -55,6 +55,7 @@ function sessionEnv(rcDir, apiUrl, overrides = {}) {
     SELF_HANDOFF_WORKFLOW_FILE: "notifications-worker-self-handoff.yml",
     SELF_HANDOFF_WORKFLOW_REF: "notifications-self-handoff-v1",
     SELF_HANDOFF_ORCHESTRATOR_SHA: orchestratorSha,
+    SELF_HANDOFF_REMAINING: "unlimited",
     SELF_HANDOFF_START_MS: "30",
     SELF_HANDOFF_TARGET_MS: "70",
     SELF_HANDOFF_MAX_MS: "150",
@@ -161,7 +162,7 @@ test("a leader dispatches one successor and shuts down gracefully only after orc
   const rcDir = await makeFakeRc(leaderWorker);
   try {
     const result = await runWorkerSession({
-      env: sessionEnv(rcDir, fixture.apiUrl),
+      env: sessionEnv(rcDir, fixture.apiUrl, { SELF_HANDOFF_REMAINING: "1" }),
       fetchImpl: fixture.fetchImpl
     });
     assert.equal(result.outcome, "handed-off");
@@ -169,6 +170,25 @@ test("a leader dispatches one successor and shuts down gracefully only after orc
     assert.equal(result.orchestrationReady, true);
     assert.equal(result.forced, false);
     assert.equal(fixture.requests.filter((request) => request.method === "POST").length, 1);
+    const dispatchBody = JSON.parse(fixture.requests.find((request) => request.method === "POST").body);
+    assert.equal(dispatchBody.inputs.handoffs_remaining, "0");
+  } finally {
+    await rm(rcDir, { recursive: true, force: true });
+  }
+});
+
+test("the terminal Canary session stops gracefully without dispatching a third run", async () => {
+  const fixture = createGitHubFixture(() => ({ status: 500, body: {} }));
+  const rcDir = await makeFakeRc(leaderWorker);
+  try {
+    const result = await runWorkerSession({
+      env: sessionEnv(rcDir, fixture.apiUrl, { SELF_HANDOFF_REMAINING: "0" }),
+      fetchImpl: fixture.fetchImpl
+    });
+    assert.equal(result.outcome, "terminal-session-complete");
+    assert.equal(result.hadLeadership, true);
+    assert.equal(result.forced, false);
+    assert.equal(fixture.requests.length, 0);
   } finally {
     await rm(rcDir, { recursive: true, force: true });
   }
@@ -348,4 +368,9 @@ test("the workflow keeps the immutable RC and places the PostgreSQL gate before 
   assert.ok(gateIndex > 0);
   assert.ok(workerIndex > gateIndex);
   assert.doesNotMatch(workflow, /^concurrency:/m);
+  assert.match(workflow, /SELF_HANDOFF_REMAINING:/);
+  assert.match(workflow, /CANARY_DATABASE_URL/);
+  assert.match(workflow, /2099-01-01T00:00:00\.000Z/);
+  assert.match(workflow, /CARD_EXPORT_WORKER_ENABLED: "false"/);
+  assert.doesNotMatch(workflow, /secrets\.DATABASE_URL/);
 });
